@@ -26,6 +26,18 @@
             <li><button @click="logout" class="dropdown-link text-red-500">Logout</button></li>
           </ul>
         </li>
+        <li v-if="isLoggedIn" class="relative group">
+          <button class="nav-link flex items-center gap-1">Admin <span>▾</span></button>
+          <ul
+            class="absolute top-full mt-2 w-40 right-0 bg-white border rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200"
+          >
+            <li>
+              <router-link to="/admin/manageservices" class="dropdown-link"
+                >Manage Services</router-link
+              >
+            </li>
+          </ul>
+        </li>
 
         <li v-if="!isLoggedIn">
           <router-link to="/login" class="nav-link">Login</router-link>
@@ -79,6 +91,18 @@
               <router-link to="/profile" @click="close" class="mobile-link"
                 >My Bookings</router-link
               >
+            </li>
+            <li>
+              <button class="mobile-link">Admin <span>▾</span></button>
+              <ul
+                class="absolute top-full mt-2 w-40 right-0 bg-white border rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200"
+              >
+                <li>
+                  <router-link to="/admin/manageservices" class="dropdown-link"
+                    >Manage Services</router-link
+                  >
+                </li>
+              </ul>
             </li>
             <li>
               <button @click="(logout(), close())" class="mobile-link text-red-500">Logout</button>

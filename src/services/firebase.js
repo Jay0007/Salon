@@ -37,6 +37,7 @@ import {
   where,
   getDoc,
   getDocs,
+  addDoc,
   updateDoc,
   deleteDoc
 } from 'firebase/firestore'
@@ -143,6 +144,7 @@ export {
   where,
   getDoc,
   getDocs,
+  addDoc,
   updateDoc,
   deleteDoc,
 
