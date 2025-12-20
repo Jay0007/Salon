@@ -82,13 +82,19 @@
         <div class="mt-10 flex items-center justify-end">
           <button
             @click="saveService"
-            class="inline-flex items-center justify-center rounded-xl px-10 py-3 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-600/30 transition"
+            :disabled="saving"
+            class="inline-flex items-center justify-center rounded-xl px-10 py-3 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-600/30 transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {{ editingId ? 'Update Service' : 'Add Service' }}
+            {{ saving ? 'Saving…' : editingId ? 'Update Service' : 'Add Service' }}
           </button>
         </div>
       </div>
     </section>
+
+    <!-- error rendring here  -->
+    <p v-if="error" class="mt-4 text-sm text-red-600">
+      {{ error }}
+    </p>
 
     <!-- Services -->
     <section v-if="!loading" class="space-y-10">
@@ -104,7 +110,7 @@
             class="bg-white border rounded-xl p-4 flex justify-between hover:shadow transition"
           >
             <!-- Info -->
-            <div>
+            <div :class="!service.isActive && 'opacity-50'">
               <p class="font-medium text-gray-800">
                 {{ service.name }}
               </p>
@@ -113,10 +119,16 @@
 
             <!-- Actions -->
             <div class="text-right">
-              <p class="font-semibold text-indigo-600">₹{{ service.price }}</p>
+              <p class="font-semibold text-indigo-600" :class="!service.isActive && 'opacity-50'">
+                ₹{{ service.price }}
+              </p>
 
               <div class="mt-2 flex gap-3 justify-end text-xs">
-                <button class="text-indigo-600 hover:underline" @click="editService(service)">
+                <button
+                  class="text-indigo-600 hover:underline"
+                  :class="!service.isActive && 'opacity-50'"
+                  @click="editService(service)"
+                >
                   Edit
                 </button>
 
@@ -153,7 +165,8 @@ import {
   doc,
   serverTimestamp,
   query,
-  orderBy
+  orderBy,
+  getAuth
 } from '@/services/firebase'
 
 /* ---------------- State ---------------- */
@@ -181,6 +194,7 @@ const groupedServices = computed(() => {
   services.value.forEach((s) => {
     if (!map[s.category]) map[s.category] = []
     map[s.category].push(s)
+    map[s.category].sort((a, b) => a.price - b.price)
   })
   return map
 })
@@ -190,7 +204,7 @@ const groupedServices = computed(() => {
 async function loadServices() {
   loading.value = true
   services.value = []
-
+  console.log('User UID:', getAuth().currentUser?.uid)
   const q = query(collection(db, 'services'), orderBy('createdAt', 'desc'))
   const snap = await getDocs(q)
 
@@ -202,8 +216,8 @@ async function loadServices() {
 }
 
 async function saveService() {
+  if (saving.value) return
   error.value = ''
-
   if (!form.value.name || !form.value.category || !form.value.price || !form.value.duration) {
     error.value = 'All fields are required'
     return
@@ -228,7 +242,12 @@ async function saveService() {
 
 function editService(service) {
   editingId.value = service.id
-  form.value = { ...service }
+  form.value = {
+    name: service.name,
+    category: service.category,
+    price: service.price,
+    duration: service.duration
+  }
 }
 
 async function toggleStatus(service) {

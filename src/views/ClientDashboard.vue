@@ -143,7 +143,11 @@ onMounted(() => {
 const steps = ['Who is this for?', 'Select Services', 'Date & Time']
 
 const selectedServices = ref([])
-const booking = ref([])
+const booking = ref({
+  date: null,
+  startTime: null,
+  endTime: null
+})
 const step = ref(1)
 
 const bookingFor = ref({
@@ -173,7 +177,7 @@ const isBookingForValid = computed(() => {
   const phoneDigits = bookingFor.value.phone.replace(/\D/g, '')
 
   const isValidName = /^[A-Za-z\s]{3,15}$/.test(name)
-  const isValidPhone = phoneDigits.length == 12
+  const isValidPhone = phoneDigits.length == 10
 
   return isValidName && isValidPhone
 })
@@ -209,7 +213,7 @@ const confirmBooking = async () => {
     })),
     totalPrice: totalPrice.value,
     totalDuration: totalTime.value,
-    status: 'pending',
+    status: 'pending_confirmation',
     createdAt: serverTimestamp()
   }
   try {

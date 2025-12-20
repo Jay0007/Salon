@@ -1,79 +1,128 @@
 <template>
   <div>
-    <h2 class="text-xl font-semibold mb-4">Select Services</h2>
+    <h2 class="text-xl font-semibold text-gray-800 mb-6">Select Services</h2>
 
-    <div v-for="(group, category) in categorizedServices" :key="category" class="mb-6">
-      <h3 class="text-lg font-bold text-indigo-700 mb-2">{{ category }}</h3>
-      <div class="space-y-3">
-        <div
-          v-for="service in group"
-          :key="service.id"
-          class="flex items-center justify-between p-3 border rounded hover:bg-gray-50"
-        >
-          <div>
-            <h4 class="font-medium">{{ service.name }}</h4>
-            <p class="text-sm text-gray-500">${{ service.price }} · {{ service.duration }} min</p>
-          </div>
+    <!-- Services -->
+    <div v-if="!loading" class="space-y-8">
+      <div v-for="(group, category) in groupedServices" :key="category">
+        <h3 class="text-lg font-medium text-gray-700 mb-3">
+          {{ category }}
+        </h3>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <button
-            @click="toggleService(service)"
-            :class="[
-              'px-3 py-1 rounded text-sm font-medium',
-              isSelected(service) ? 'bg-red-100 text-red-600' : 'bg-indigo-100 text-indigo-600'
-            ]"
+            v-for="service in group"
+            :key="service.id"
+            @click="toggle(service)"
+            class="border rounded-xl p-4 flex justify-between text-left transition"
+            :class="
+              isSelected(service.id)
+                ? 'border-indigo-600 bg-indigo-50'
+                : 'border-gray-200 hover:border-indigo-400'
+            "
           >
-            {{ isSelected(service) ? 'Remove' : 'Add' }}
+            <!-- Left -->
+            <div>
+              <p class="font-medium text-gray-800">
+                {{ service.name }}
+              </p>
+              <p class="text-sm text-gray-500 mt-1">{{ service.duration }} min</p>
+            </div>
+
+            <!-- Right -->
+            <div class="text-right">
+              <p class="font-semibold text-indigo-600">₹{{ service.price }}</p>
+
+              <span
+                v-if="isSelected(service.id)"
+                class="inline-block mt-2 text-xs font-medium text-indigo-600"
+              >
+                Selected
+              </span>
+            </div>
           </button>
         </div>
       </div>
     </div>
+
+    <!-- Loading -->
+    <p v-else class="text-gray-400 text-sm text-center">Loading services…</p>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { db, collection, getDocs, query, where, orderBy } from '@/services/firebase'
 
-const props = defineProps(['modelValue'])
+/* ---------------- Props / Emits ---------------- */
+
+const props = defineProps({
+  modelValue: {
+    type: Array,
+    default: () => []
+  }
+})
+
 const emit = defineEmits(['update:modelValue'])
 
+/* ---------------- State ---------------- */
+
+const services = ref([])
 const selected = ref([...props.modelValue])
+const loading = ref(true)
 
-const services = [
-  { id: 1, name: 'Full Face Makeup', price: 70, duration: 45, category: 'Makeup' },
-  { id: 2, name: 'Bridal Makeup', price: 150, duration: 90, category: 'Makeup' },
-  { id: 3, name: 'Hair Styling', price: 40, duration: 30, category: 'Hair' },
-  { id: 4, name: 'Hair Wash & Blowdry', price: 30, duration: 25, category: 'Hair' },
-  { id: 5, name: 'Henna - One Hand', price: 25, duration: 30, category: 'Henna' },
-  { id: 6, name: 'Henna - Both Hands', price: 45, duration: 60, category: 'Henna' },
-  { id: 7, name: 'Eyebrow Threading', price: 10, duration: 10, category: 'Threading' },
-  { id: 8, name: 'Upper Lip Threading', price: 8, duration: 5, category: 'Threading' }
-]
+/* ---------------- Computed ---------------- */
 
-const categorizedServices = computed(() => {
+const groupedServices = computed(() => {
   const map = {}
-  for (const service of services) {
-    if (!map[service.category]) map[service.category] = []
-    map[service.category].push(service)
-  }
+  services.value.forEach((s) => {
+    if (!map[s.category]) map[s.category] = []
+    map[s.category].push(s)
+  })
   return map
 })
 
-function isSelected(service) {
-  return selected.value.some((s) => s.id === service.id)
+/* ---------------- Methods ---------------- */
+
+function isSelected(id) {
+  return selected.value.some((s) => s.id === id)
 }
 
-function toggleService(service) {
-  if (isSelected(service)) {
-    selected.value = selected.value.filter((s) => s.id !== service.id)
+function toggle(service) {
+  const index = selected.value.findIndex((s) => s.id === service.id)
+
+  if (index > -1) {
+    selected.value.splice(index, 1)
   } else {
     selected.value.push(service)
   }
+
+  emit('update:modelValue', selected.value)
 }
 
+async function loadServices() {
+  loading.value = true
+
+  const q = query(
+    collection(db, 'services'),
+    where('isActive', '==', true),
+    orderBy('createdAt', 'desc')
+  )
+
+  const snap = await getDocs(q)
+  services.value = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+
+  loading.value = false
+}
+
+/* ---------------- Lifecycle ---------------- */
+
+onMounted(loadServices)
+
 watch(
-  selected,
-  () => {
-    emit('update:modelValue', selected.value)
-  },
-  { deep: true }
+  () => props.modelValue,
+  (val) => {
+    selected.value = [...val]
+  }
 )
 </script>

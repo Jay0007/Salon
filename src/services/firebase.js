@@ -132,7 +132,7 @@ function listenToUserBookingsSplit(userId, callback) {
 export {
   auth,
   db,
-
+  getAuth,
   // Firestore core
   doc,
   setDoc,
