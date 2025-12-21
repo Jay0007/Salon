@@ -8,6 +8,7 @@ import Register from '../views/Register.vue'
 import ClientDashboard from '../views/ClientDashboard.vue'
 import UserProfile from '@/views/UserProfile.vue'
 import manageServices from '@/pages/admin/manageServices.vue'
+import manageStaff from '@/pages/admin/manageStaff.vue'
 import { auth } from '../services/firebase'
 
 const routes = [
@@ -23,6 +24,12 @@ const routes = [
     path: '/admin/manageservices',
     name: 'manageServices',
     component: manageServices,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/admin/managestaff',
+    name: 'manageStaff',
+    component: manageStaff,
     meta: { requiresAuth: true }
   }
 ]

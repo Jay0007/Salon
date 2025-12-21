@@ -36,6 +36,9 @@
                 >Manage Services</router-link
               >
             </li>
+            <li>
+              <router-link to="/admin/managestaff" class="dropdown-link">Manage Staff</router-link>
+            </li>
           </ul>
         </li>
 
@@ -100,6 +103,11 @@
                 <li>
                   <router-link to="/admin/manageservices" class="dropdown-link"
                     >Manage Services</router-link
+                  >
+                </li>
+                <li>
+                  <router-link to="/admin/managestaff" class="dropdown-link"
+                    >Manage Staff</router-link
                   >
                 </li>
               </ul>

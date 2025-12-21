@@ -106,7 +106,8 @@ async function loadServices() {
   const q = query(
     collection(db, 'services'),
     where('isActive', '==', true),
-    orderBy('createdAt', 'desc')
+    orderBy('createdAt', 'desc'),
+    orderBy('__name__', 'desc')
   )
 
   const snap = await getDocs(q)

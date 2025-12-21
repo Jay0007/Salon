@@ -1,51 +1,33 @@
 <template>
-  <div>
-    <h2 class="text-xl font-semibold mb-1 text-gray-800">Choose Date & Time</h2>
-    <p class="text-sm text-gray-500 mb-5">Select your preferred appointment slot</p>
-
-    <!-- DATE SELECTION -->
-    <div class="mb-6">
-      <h3 class="text-sm font-medium text-gray-600 mb-3">Select Date</h3>
-
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <button
-          v-for="date in next7Days"
-          :key="date.value"
-          @click="selectDate(date.value)"
-          :class="[
-            'rounded-lg border p-3 text-left transition',
-            selectedDate === date.value
-              ? 'bg-indigo-600 text-white border-indigo-600'
-              : 'bg-white hover:border-indigo-400'
-          ]"
-        >
-          <p class="text-xs opacity-80">
-            {{ date.label }}
-          </p>
-          <p class="font-semibold">
-            {{ date.display }}
-          </p>
-        </button>
-      </div>
+  <div class="space-y-6">
+    <!-- Date -->
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1"> Select Date </label>
+      <input
+        type="date"
+        v-model="selectedDate"
+        :min="today"
+        class="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500"
+      />
     </div>
 
-    <!-- TIME SELECTION -->
-    <div>
-      <h3 class="text-sm font-medium text-gray-600 mb-3">Available Time Slots</h3>
+    <!-- Time Slots -->
+    <div v-if="selectedDate">
+      <label class="block text-sm font-medium text-gray-700 mb-3"> Select Start Time </label>
 
-      <div class="grid grid-cols-3 sm:grid-cols-4 gap-3">
+      <div class="grid grid-cols-4 sm:grid-cols-6 gap-3">
         <button
-          v-for="slot in filteredTimeSlots"
-          :key="slot.time"
-          @click="selectTime(slot.time)"
+          v-for="slot in validSlots"
+          :key="slot.label"
           :disabled="slot.disabled"
+          @click="selectSlot(slot)"
+          class="py-2 rounded-lg text-sm border transition"
           :class="[
-            'rounded-lg border py-2 text-sm transition',
             slot.disabled
-              ? 'bg-gray-100 text-gray-400 cursor-not-allowed '
-              : selectedTime === slot.time
+              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              : selectedTime === slot.label
                 ? 'bg-indigo-600 text-white border-indigo-600'
-                : 'bg-white hover:border-indigo-400'
+                : 'bg-white hover:border-indigo-500'
           ]"
         >
           {{ slot.label }}
@@ -53,169 +35,127 @@
       </div>
     </div>
 
-    <!-- SELECTION SUMMARY -->
-    <div
-      v-if="selectedDate && selectedTime"
-      class="mt-6 p-4 bg-indigo-50 border border-indigo-200 rounded-lg text-sm"
-    >
-      <strong>Appointment:</strong><br />
-      {{ formattedSelection }}<br />
-      <span class="text-gray-600"> Duration: {{ props.duration }} minutes </span>
+    <!-- Summary -->
+    <div v-if="selectedTime" class="bg-indigo-50 border border-indigo-200 rounded-lg p-4 text-sm">
+      <p>
+        <span class="font-medium">Start:</span>
+        {{ formattedStart }}
+      </p>
+      <p>
+        <span class="font-medium">End:</span>
+        {{ formattedEnd }}
+      </p>
+      <p class="text-gray-600 mt-1">Duration: {{ duration }} minutes</p>
     </div>
+
+    <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
   </div>
 </template>
+
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { collection, query, where, getDocs, db } from '../services/firebase'
+
 const props = defineProps({
   modelValue: Object,
   duration: {
     type: Number,
-    required: true // total minutes
+    required: true
   }
 })
+
 const emit = defineEmits(['update:modelValue'])
 
-const bookedSlots = ref([])
+const selectedDate = ref('')
+const selectedTime = ref('')
+const error = ref('')
 
-const selectedDate = ref(props.modelValue?.date || '')
-const selectedTime = ref(props.modelValue?.time || '')
+const today = new Date().toISOString().split('T')[0]
 
-/* TIME CONFIG (EASY TO CHANGE LATER) */
-const openingHour = 10
-const closingHour = 20
-const intervalMinutes = 15
-
-/* DATE LIST */
-const next7Days = computed(() => {
-  return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date()
-    d.setDate(d.getDate() + i)
-
-    const iso = d.toISOString().split('T')[0]
-
-    return {
-      value: iso,
-      label:
-        i === 0
-          ? 'Today'
-          : i === 1
-            ? 'Tomorrow'
-            : d.toLocaleDateString('en-US', { weekday: 'short' }),
-      display: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    }
-  })
-})
-
-/* TIME SLOTS */
-const filteredTimeSlots = computed(() => {
-  if (!selectedDate.value || !props.duration) return []
-
-  const now = new Date()
-  const selected = new Date(selectedDate.value)
+/**
+ * Generate all slots (10:00 → 20:00)
+ */
+function generateSlots() {
   const slots = []
-
-  for (let h = openingHour; h <= closingHour; h++) {
-    for (let m = 0; m < 60; m += intervalMinutes) {
-      if (h === closingHour && m > 0) continue
-
-      const start = new Date(selected)
-      start.setHours(h, m, 0, 0)
-
-      const end = new Date(start)
-      end.setMinutes(end.getMinutes() + props.duration)
-
-      const exceedsClosing =
-        end.getHours() > closingHour || (end.getHours() === closingHour && end.getMinutes() > 0)
-
-      const isPast = selected.toDateString() === now.toDateString() && start < now
-
-      const isBooked = overlaps(start, end)
-
+  for (let h = 10; h < 20; h++) {
+    for (let m of [0, 15, 30, 45]) {
       slots.push({
-        time: start.toTimeString().slice(0, 5),
-        label: start.toLocaleTimeString('en-US', {
-          hour: 'numeric',
-          minute: '2-digit'
-        }),
-        start,
-        end,
-        disabled: isPast || exceedsClosing || isBooked
+        h,
+        m,
+        label: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
       })
     }
   }
-
   return slots
-})
-
-function formatTime(date) {
-  return date.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit'
-  })
 }
 
-function selectDate(date) {
-  selectedDate.value = date
-  selectedTime.value = ''
-  emit('update:modelValue', {
-    date: date,
-    time: '',
-    datetime: ''
-  })
-}
+/**
+ * Filter slots:
+ * - No past time
+ * - Must fit duration before closing
+ */
+const validSlots = computed(() => {
+  if (!selectedDate.value) return []
 
-function selectTime(time) {
-  selectedTime.value = time
-}
+  const now = new Date()
+  const slots = generateSlots()
 
-/* EMIT CLEAN MODEL */
+  return slots.map((slot) => {
+    const start = new Date(selectedDate.value)
+    start.setHours(slot.h, slot.m, 0, 0)
 
-// watch([selectedDate, selectedTime], () => {
-//   if (!selectedDate.value || !selectedTime.value) return
+    const end = new Date(start)
+    end.setMinutes(end.getMinutes() + props.duration)
 
-//   emit('update:modelValue', {
-//     date: selectedDate.value,
-//     startTime: `${selectedDate.value}T${selectedTime.value}:00`,
-//     duration: props.duration
-//   })
-// })
-watch(selectedDate, async (date) => {
-  if (!date) return
+    const disabled =
+      start < now || end.getHours() >= 20 || (end.getHours() === 20 && end.getMinutes() > 0)
 
-  bookedSlots.value = []
-
-  const q = query(
-    collection(db, 'bookings'),
-    where('bookingDate', '==', date),
-    where('status', '==', 'confirmed')
-  )
-
-  const snap = await getDocs(q)
-
-  snap.forEach((doc) => {
-    bookedSlots.value.push({
-      start: new Date(doc.data().startTime),
-      end: new Date(doc.data().endTime)
-    })
+    return {
+      ...slot,
+      disabled
+    }
   })
 })
 
-function overlaps(start, end) {
-  return bookedSlots.value.some((b) => start < b.end && end > b.start)
+function selectSlot(slot) {
+  if (slot.disabled) return
+  selectedTime.value = slot.label
 }
 
-const formattedSelection = computed(() => {
-  const start = new Date(`${selectedDate.value}T${selectedTime.value}`)
+/**
+ * Emit start + end time
+ */
+watch([selectedDate, selectedTime], () => {
+  if (!selectedDate.value || !selectedTime.value) return
+
+  const [h, m] = selectedTime.value.split(':').map(Number)
+
+  const start = new Date(selectedDate.value)
+  start.setHours(h, m, 0, 0)
+
   const end = new Date(start)
   end.setMinutes(end.getMinutes() + props.duration)
 
-  return `${start.toLocaleString('en-US', {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  })} – ${end.toLocaleTimeString('en-US', {
-    hour: 'numeric',
+  emit('update:modelValue', {
+    date: selectedDate.value,
+    startTime: start,
+    endTime: end
+  })
+
+  error.value = ''
+})
+
+const formattedStart = computed(() =>
+  new Date(`${selectedDate.value}T${selectedTime.value}`).toLocaleTimeString([], {
+    hour: '2-digit',
     minute: '2-digit'
-  })}`
+  })
+)
+
+const formattedEnd = computed(() => {
+  if (!selectedDate.value || !selectedTime.value) return ''
+  const [h, m] = selectedTime.value.split(':').map(Number)
+  const d = new Date(selectedDate.value)
+  d.setHours(h, m + props.duration, 0, 0)
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 })
 </script>
