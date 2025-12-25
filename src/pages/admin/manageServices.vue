@@ -159,14 +159,13 @@ import { ref, computed, onMounted } from 'vue'
 import {
   db,
   collection,
-  addDoc,
   getDocs,
-  updateDoc,
-  doc,
-  serverTimestamp,
   query,
   orderBy,
-  getAuth
+  getAuth,
+  createService,
+  updateService,
+  toggleServiceStatus
 } from '@/services/firebase'
 
 /* ---------------- State ---------------- */
@@ -175,7 +174,6 @@ const services = ref([])
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
-
 const categories = ['Hair', 'Makeup', 'Facial', 'Bridal', 'Nails']
 
 const form = ref({
@@ -218,6 +216,7 @@ async function loadServices() {
 async function saveService() {
   if (saving.value) return
   error.value = ''
+
   if (!form.value.name || !form.value.category || !form.value.price || !form.value.duration) {
     error.value = 'All fields are required'
     return
@@ -226,13 +225,12 @@ async function saveService() {
   saving.value = true
 
   if (editingId.value) {
-    await updateDoc(doc(db, 'services', editingId.value), form.value)
-  } else {
-    await addDoc(collection(db, 'services'), {
-      ...form.value,
-      isActive: true,
-      createdAt: serverTimestamp()
+    await updateService({
+      serviceId: editingId.value,
+      ...form.value
     })
+  } else {
+    await createService(form.value)
   }
 
   resetForm()
@@ -251,7 +249,8 @@ function editService(service) {
 }
 
 async function toggleStatus(service) {
-  await updateDoc(doc(db, 'services', service.id), {
+  await toggleServiceStatus({
+    serviceId: service.id,
     isActive: !service.isActive
   })
   await loadServices()

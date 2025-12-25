@@ -118,15 +118,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import {
-  db,
-  collection,
-  addDoc,
-  getDocs,
-  updateDoc,
-  doc,
-  serverTimestamp
-} from '@/services/firebase'
+import { db, collection, getDocs } from '@/services/firebase'
 
 /* ---------------- State ---------------- */
 
@@ -167,22 +159,17 @@ async function saveStaff() {
   }
 
   if (editingId.value) {
-    await updateDoc(doc(db, 'staff', editingId.value), {
+    await updateStaff({
+      staffId: editingId.value,
       name: form.value.name,
-      isActive: form.value.isActive,
-      services: form.value.services
+      services: form.value.services,
+      isActive: form.value.isActive
     })
   } else {
-    await addDoc(collection(db, 'staff'), {
+    await createStaff({
       name: form.value.name,
-      isActive: form.value.isActive,
       services: form.value.services,
-      createdAt: serverTimestamp()
-
-      /*
-        FUTURE:
-        servicePricing: {}
-      */
+      isActive: form.value.isActive
     })
   }
 
@@ -200,7 +187,8 @@ function editStaff(member) {
 }
 
 async function toggleStatus(member) {
-  await updateDoc(doc(db, 'staff', member.id), {
+  await toggleStaffStatus({
+    staffId: member.id,
     isActive: !member.isActive
   })
   await loadStaff()

@@ -13,14 +13,14 @@
       <!-- Staff selector -->
       <select
         v-else
-        :value="modelValue[service.id] || ''"
+        :value="modelValue[service.id] ?? ''"
         @change="onSelect(service.id, $event.target.value)"
         class="w-full border rounded px-3 py-2"
       >
         <option disabled value="">Select staff</option>
 
         <!-- Any staff option (only if >1 staff) -->
-        <option v-if="staffByService(service.id).length > 1" value="ANY">
+        <option v-if="staffByService(service.id).length > 1" value="null">
           Any available staff
         </option>
 
@@ -75,13 +75,19 @@ watchEffect(() => {
   props.services.forEach((service) => {
     const staffOptions = staffByService(service.id)
 
-    // Auto-assign only if exactly one staff and nothing selected yet
-    if (staffOptions.length === 1 && !next[service.id]) {
+    // If exactly ONE staff → auto-assign
+    if (staffOptions.length === 1) {
       next[service.id] = staffOptions[0].id
+      return
+    }
+
+    // If multiple staff and nothing chosen yet → default to ANY (null)
+    if (staffOptions.length > 1 && !(service.id in next)) {
+      next[service.id] = null
     }
   })
 
-  // Emit only if something actually changed
+  // Emit only if changed
   if (JSON.stringify(next) !== JSON.stringify(props.modelValue)) {
     emit('update:modelValue', next)
   }

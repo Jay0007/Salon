@@ -116,8 +116,17 @@ import StepServices from '@/components/StepServices.vue'
 import StepSchedule from '@/components/StepSchedule.vue'
 import SelectStaff from '@/components/SelectStaff.vue'
 
-import { auth, onAuthStateChanged, serverTimestamp } from '@/services/firebase'
-import { addBooking, getDocs, collection, db, query, where } from '@/services/firebase'
+import {
+  auth,
+  onAuthStateChanged,
+  serverTimestamp,
+  db,
+  collection,
+  getDocs,
+  query,
+  where
+} from '@/services/firebase'
+import { createBooking } from '@/services/firebase'
 
 /* --------------------------------------------------
    Router & User
@@ -132,7 +141,7 @@ const steps = ['Who is this for?', 'Select Services', 'Select Staff', 'Date & Ti
 const step = ref(1)
 
 /* --------------------------------------------------
-   Booking State (DECLARE FIRST)
+   Booking State
 -------------------------------------------------- */
 const bookingFor = ref({
   type: 'self',
@@ -143,10 +152,9 @@ const bookingFor = ref({
 const selectedServices = ref([])
 
 /**
- * staffAssignments structure:
+ * staffAssignments:
  * {
- *   serviceId1: staffId1,
- *   serviceId2: staffId2
+ *   serviceId: staffId | 'ANY'
  * }
  */
 const staffAssignments = ref({})
@@ -159,42 +167,39 @@ const booking = ref({
 /* --------------------------------------------------
    Derived Values
 -------------------------------------------------- */
-const totalDuration = computed(() => selectedServices.value.reduce((sum, s) => sum + s.duration, 0))
+const totalDuration = computed(() =>
+  selectedServices.value.reduce((sum, s) => sum + (s.duration || 0), 0)
+)
 
-const totalPrice = computed(() => selectedServices.value.reduce((sum, s) => sum + s.price, 0))
+const totalPrice = computed(() =>
+  selectedServices.value.reduce((sum, s) => sum + (s.price || 0), 0)
+)
 
 /* --------------------------------------------------
    Step Validation
 -------------------------------------------------- */
 const canProceed = computed(() => {
-  if (step.value === 1) {
-    return !!bookingFor.value.type
-  }
-
-  if (step.value === 2) {
-    return selectedServices.value.length > 0
-  }
+  if (step.value === 1) return !!bookingFor.value.type
+  if (step.value === 2) return selectedServices.value.length > 0
 
   if (step.value === 3) {
-    // Every selected service must have staff assigned
-    return selectedServices.value.every((service) => staffAssignments.value[service.id])
+    return selectedServices.value.every((s) => staffAssignments.value[s.id])
   }
 
   return true
 })
 
 /* --------------------------------------------------
-   Watchers (SAFE NOW)
+   Cleanup staff assignments when services change
 -------------------------------------------------- */
 watch(
   selectedServices,
   (services) => {
-    const next = { ...staffAssignments.value }
+    const next = {}
 
-    // remove assignments for removed services
-    Object.keys(next).forEach((serviceId) => {
-      if (!services.some((s) => s.id === serviceId)) {
-        delete next[serviceId]
+    services.forEach((s) => {
+      if (staffAssignments.value[s.id]) {
+        next[s.id] = staffAssignments.value[s.id]
       }
     })
 
@@ -227,47 +232,65 @@ function calculateEndTime(start, duration) {
   return end
 }
 
+function overlaps(aStart, aEnd, bStart, bEnd) {
+  return aStart < bEnd && bStart < aEnd
+}
+
+/**
+ * FINAL, SAFE STAFF RESOLUTION
+ * - Resolves ONLY 'ANY'
+ * - Prevents overlaps
+ * - Never mutates reactive state
+ * - Never runs early
+ */
 async function resolveAnyStaff(assignments, services, startAt, endAt) {
   const resolved = { ...assignments }
 
-  // Load all staff once
+  // Load staff (public read)
   const staffSnap = await getDocs(collection(db, 'staff'))
-  const staffList = staffSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+  const staffList = staffSnap.docs.map((d) => ({
+    id: d.id,
+    ...d.data()
+  }))
 
-  // Load existing bookings once
+  // Load relevant bookings (rules-safe)
   const bookingSnap = await getDocs(
     query(collection(db, 'bookings'), where('status', 'in', ['pending', 'confirmed']))
   )
 
-  const existingBookings = bookingSnap.docs.map((d) => d.data())
+  const existingBookings = bookingSnap.docs.map((d) => ({
+    ...d.data(),
+    startAt: d.data().startAt.toDate(),
+    endAt: d.data().endAt.toDate()
+  }))
 
   for (const service of services) {
     if (resolved[service.id] !== 'ANY') continue
 
-    const eligibleStaff = staffList.filter((staff) => staff.services?.includes(service.id))
+    const eligibleStaff = staffList.filter(
+      (staff) => Array.isArray(staff.services) && staff.services.includes(service.id)
+    )
 
-    const availableStaff = eligibleStaff.find((staff) => {
+    const available = eligibleStaff.find((staff) => {
       const staffBookings = existingBookings.filter(
         (b) => b.staffAssignments?.[service.id] === staff.id
       )
 
-      return staffBookings.every(
-        (b) => !overlaps(startAt, endAt, b.startAt.toDate(), b.endAt.toDate())
-      )
+      return staffBookings.every((b) => !overlaps(startAt, endAt, b.startAt, b.endAt))
     })
 
-    if (!availableStaff) {
+    if (!available) {
       throw new Error(`No staff available for ${service.name}`)
     }
 
-    resolved[service.id] = availableStaff.id
+    resolved[service.id] = available.id
   }
 
   return resolved
 }
 
 /* --------------------------------------------------
-   Save Booking
+   Save Booking (ONLY PLACE WHERE AVAILABILITY IS CHECKED)
 -------------------------------------------------- */
 async function confirmBooking() {
   if (!booking.value.startTime) {
@@ -277,12 +300,21 @@ async function confirmBooking() {
 
   const startAt = booking.value.startTime
   const endAt = calculateEndTime(startAt, totalDuration.value)
-  const finalStaffAssignments = await resolveAnyStaff(
-    staffAssignments.value,
-    selectedServices.value,
-    startAt,
-    endAt
-  )
+
+  let finalStaffAssignments
+
+  try {
+    finalStaffAssignments = await resolveAnyStaff(
+      staffAssignments.value,
+      selectedServices.value,
+      startAt,
+      endAt
+    )
+  } catch (err) {
+    console.error(err)
+    return
+  }
+
   const bookingData = {
     userId: user.value.uid,
 
@@ -301,7 +333,14 @@ async function confirmBooking() {
   }
 
   try {
-    await addBooking(bookingData)
+    // await addBooking(bookingData)
+    await createBooking({
+      serviceId,
+      serviceName,
+      date,
+      time
+    })
+
     router.push('/profile')
   } catch (err) {
     console.error(err)

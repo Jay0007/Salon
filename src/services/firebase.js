@@ -42,6 +42,8 @@ import {
   deleteDoc
 } from 'firebase/firestore'
 
+import { getFunctions, httpsCallable } from 'firebase/functions'
+
 // --- Firebase Configuration ---
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -57,6 +59,7 @@ const config = {
 const app = initializeApp(config)
 const auth = getAuth(app)
 const db = getFirestore()
+const functions = getFunctions(app)
 
 // Set persistence to local
 setPersistence(auth, browserLocalPersistence).catch((err) => {
@@ -65,23 +68,34 @@ setPersistence(auth, browserLocalPersistence).catch((err) => {
 
 // --- Booking Helpers ---
 
-// Add a new booking
-async function addBooking(data) {
-  console.log(data)
-  const bookingsRef = collection(db, 'bookings')
-  alert('Booking successful!')
-  const newDocRef = doc(bookingsRef)
-  await setDoc(newDocRef, {
-    ...data,
-    createdAt: serverTimestamp()
+// --- Booking via Cloud Function ---
+async function createBooking({ serviceId, serviceName, date, time }) {
+  if (!auth.currentUser) {
+    throw new Error('User not authenticated')
+  }
+
+  const fn = httpsCallable(functions, 'createBooking')
+
+  const result = await fn({
+    serviceId,
+    serviceName,
+    date,
+    time
   })
-  return newDocRef.id
+
+  return result.data
 }
 
 // Cancel a booking
 async function cancelBooking(bookingId) {
   const bookingRef = doc(db, 'bookings', bookingId)
   return updateDoc(bookingRef, { status: 'cancelled' })
+}
+
+// Reschedule a booking
+async function rescheduleBooking({ bookingId, newStartAt, newEndAt }) {
+  const fn = httpsCallable(functions, 'rescheduleBooking')
+  return (await fn({ bookingId, newStartAt, newEndAt })).data
 }
 
 // Get upcoming bookings
@@ -108,6 +122,35 @@ async function getPastBookings(userId) {
   )
   const snapshot = await getDocs(q)
   return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+}
+
+async function createStaff(data) {
+  const fn = httpsCallable(functions, 'createStaff')
+  return (await fn(data)).data
+}
+
+async function updateStaff(data) {
+  const fn = httpsCallable(functions, 'updateStaff')
+  return (await fn(data)).data
+}
+async function createService(data) {
+  const fn = httpsCallable(functions, 'createService')
+  return (await fn(data)).data
+}
+
+async function updateService(data) {
+  const fn = httpsCallable(functions, 'updateService')
+  return (await fn(data)).data
+}
+
+async function toggleServiceStatus(data) {
+  const fn = httpsCallable(functions, 'toggleServiceStatus')
+  return (await fn(data)).data
+}
+
+async function toggleStaffStatus(data) {
+  const fn = httpsCallable(functions, 'toggleStaffStatus')
+  return (await fn(data)).data
 }
 
 // Real-time listener for user's bookings (split into upcoming & past)
@@ -168,9 +211,17 @@ export {
   updateProfile,
 
   // Booking helpers
-  addBooking,
+  // addBooking,
+  createBooking,
   cancelBooking,
+  rescheduleBooking,
   getUpcomingBookings,
   getPastBookings,
-  listenToUserBookingsSplit
+  listenToUserBookingsSplit,
+  createStaff,
+  updateStaff,
+  toggleStaffStatus,
+  createService,
+  updateService,
+  toggleServiceStatus
 }
