@@ -59,7 +59,7 @@ const config = {
 const app = initializeApp(config)
 const auth = getAuth(app)
 const db = getFirestore()
-const functions = getFunctions(app)
+const functions = getFunctions(app, 'us-central1')
 
 // Set persistence to local
 setPersistence(auth, browserLocalPersistence).catch((err) => {
@@ -173,6 +173,8 @@ function listenToUserBookingsSplit(userId, callback) {
 
 // --- Exports ---
 export {
+  app,
+  functions,
   auth,
   db,
   getAuth,

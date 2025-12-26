@@ -1,155 +1,117 @@
-const functions = require('firebase-functions')
+const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 
-admin.initializeApp()
+if (!admin.apps.length) {
+  admin.initializeApp()
+}
+
 const db = admin.firestore()
 
-function assertAdmin(context) {
-  if (!context.auth || context.auth.token.admin !== true) {
-    throw new functions.https.HttpsError('permission-denied', 'Admin access required')
+/* ---------------- Helpers ---------------- */
+
+function assertAuth(request) {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Login required')
   }
 }
 
-/**
- * Create a new booking (server-side only), Called from Vue using httpsCallable
- */
-exports.createBooking = functions.https.onCall(async (data, context) => {
-  // 1. Auth check
-  if (!context.auth) {
-    throw new functions.https.HttpsError(
-      'unauthenticated',
-      'You must be logged in to create a booking.'
-    )
+function assertAdmin(request) {
+  if (!request.auth || request.auth.token.admin !== true) {
+    throw new HttpsError('permission-denied', 'Admin access required')
   }
+}
 
-  const uid = context.auth.uid
+/* ---------------- BOOKINGS ---------------- */
 
-  // 2. Validate input
-  const { serviceId, serviceName, date, time } = data
+exports.createBooking = onCall(async (request) => {
+  assertAuth(request)
+
+  const { serviceId, serviceName, date, time } = request.data
+  const uid = request.auth.uid
 
   if (!serviceId || !serviceName || !date || !time) {
-    throw new functions.https.HttpsError('invalid-argument', 'Missing booking details.')
+    throw new HttpsError('invalid-argument', 'Missing booking details')
   }
 
-  // 3. Create booking
   const bookingRef = db.collection('bookings').doc()
 
-  const bookingData = {
+  await bookingRef.set({
     userId: uid,
     serviceId,
     serviceName,
-    date, // e.g. "2025-01-15"
-    time, // e.g. "14:30"
+    date,
+    time,
     status: 'confirmed',
     createdAt: admin.firestore.FieldValue.serverTimestamp()
-  }
+  })
 
-  await bookingRef.set(bookingData)
-
-  // 4. Return response
-  return {
-    success: true,
-    bookingId: bookingRef.id
-  }
+  return { success: true, bookingId: bookingRef.id }
 })
 
-/**
- * Cancel a booking (user can cancel only their own booking)
- */
-exports.cancelBooking = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'You must be logged in.')
-  }
+exports.cancelBooking = onCall(async (request) => {
+  assertAuth(request)
 
-  const { bookingId } = data
+  const { bookingId } = request.data
+  const uid = request.auth.uid
 
   if (!bookingId) {
-    throw new functions.https.HttpsError('invalid-argument', 'Booking ID is required.')
+    throw new HttpsError('invalid-argument', 'Booking ID required')
   }
 
-  const uid = context.auth.uid
-  const bookingRef = db.collection('bookings').doc(bookingId)
-  const bookingSnap = await bookingRef.get()
+  const ref = db.collection('bookings').doc(bookingId)
+  const snap = await ref.get()
 
-  if (!bookingSnap.exists) {
-    throw new functions.https.HttpsError('not-found', 'Booking not found.')
+  if (!snap.exists) {
+    throw new HttpsError('not-found', 'Booking not found')
   }
 
-  const bookingData = bookingSnap.data()
-
-  // User can cancel ONLY their own booking
-  if (bookingData.userId !== uid) {
-    throw new functions.https.HttpsError('permission-denied', 'You cannot cancel this booking.')
+  if (snap.data().userId !== uid) {
+    throw new HttpsError('permission-denied', 'Not your booking')
   }
 
-  await bookingRef.update({
+  await ref.update({
     status: 'cancelled',
     cancelledAt: admin.firestore.FieldValue.serverTimestamp()
   })
 
-  return {
-    success: true
-  }
+  return { success: true }
 })
 
-/**
- * Reschedule a booking
- */
-exports.rescheduleBooking = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'Login required')
-  }
+exports.rescheduleBooking = onCall(async (request) => {
+  assertAuth(request)
 
-  const { bookingId, newStartAt, newEndAt } = data
-  const uid = context.auth.uid
+  const { bookingId, newStartAt, newEndAt } = request.data
+  const uid = request.auth.uid
 
   if (!bookingId || !newStartAt || !newEndAt) {
-    throw new functions.https.HttpsError('invalid-argument', 'Missing reschedule details')
+    throw new HttpsError('invalid-argument', 'Missing reschedule details')
   }
 
-  const bookingRef = db.collection('bookings').doc(bookingId)
-  const snap = await bookingRef.get()
+  const ref = db.collection('bookings').doc(bookingId)
+  const snap = await ref.get()
 
   if (!snap.exists) {
-    throw new functions.https.HttpsError('not-found', 'Booking not found')
+    throw new HttpsError('not-found', 'Booking not found')
   }
 
   const booking = snap.data()
 
   if (booking.userId !== uid) {
-    throw new functions.https.HttpsError('permission-denied', 'Not your booking')
+    throw new HttpsError('permission-denied', 'Not your booking')
   }
 
-  if (booking.status === 'cancelled') {
-    throw new functions.https.HttpsError(
-      'failed-precondition',
-      'Cancelled booking cannot be rescheduled'
-    )
-  }
-
-  const now = new Date()
-  if (booking.endAt.toDate() < now) {
-    throw new functions.https.HttpsError(
-      'failed-precondition',
-      'Past booking cannot be rescheduled'
-    )
-  }
-
-  // --- TIME SLOT CONFLICT CHECK (SEE PART 3) ---
-  const conflictQuery = await db
+  const conflicts = await db
     .collection('bookings')
     .where('status', '==', 'confirmed')
     .where('startAt', '<', newEndAt)
     .where('endAt', '>', newStartAt)
     .get()
 
-  const conflict = conflictQuery.docs.find((d) => d.id !== bookingId)
-
-  if (conflict) {
-    throw new functions.https.HttpsError('already-exists', 'Selected time slot is not available')
+  if (conflicts.docs.some((d) => d.id !== bookingId)) {
+    throw new HttpsError('already-exists', 'Time slot not available')
   }
 
-  await bookingRef.update({
+  await ref.update({
     startAt: admin.firestore.Timestamp.fromDate(new Date(newStartAt)),
     endAt: admin.firestore.Timestamp.fromDate(new Date(newEndAt)),
     updatedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -158,34 +120,36 @@ exports.rescheduleBooking = functions.https.onCall(async (data, context) => {
   return { success: true }
 })
 
-exports.createStaff = functions.https.onCall(async (data, context) => {
-  assertAdmin(context)
+/* ---------------- STAFF (ADMIN) ---------------- */
 
-  const { name, services, isActive } = data
+exports.createStaff = onCall(async (request) => {
+  assertAdmin(request)
 
-  if (!name || !Array.isArray(services) || services.length === 0) {
-    throw new functions.https.HttpsError('invalid-argument', 'Staff name and services are required')
+  const { name, services, isActive } = request.data
+
+  if (!name || !Array.isArray(services) || !services.length) {
+    throw new HttpsError('invalid-argument', 'Invalid staff data')
   }
 
-  const staffRef = db.collection('staff').doc()
+  const ref = db.collection('staff').doc()
 
-  await staffRef.set({
+  await ref.set({
     name,
     services,
     isActive: isActive !== false,
     createdAt: admin.firestore.FieldValue.serverTimestamp()
   })
 
-  return { success: true, staffId: staffRef.id }
+  return { success: true, staffId: ref.id }
 })
 
-exports.updateStaff = functions.https.onCall(async (data, context) => {
-  assertAdmin(context)
+exports.updateStaff = onCall(async (request) => {
+  assertAdmin(request)
 
-  const { staffId, name, services, isActive } = data
+  const { staffId, name, services, isActive } = request.data
 
   if (!staffId) {
-    throw new functions.https.HttpsError('invalid-argument', 'Staff ID required')
+    throw new HttpsError('invalid-argument', 'Staff ID required')
   }
 
   await db.collection('staff').doc(staffId).update({
@@ -197,13 +161,14 @@ exports.updateStaff = functions.https.onCall(async (data, context) => {
 
   return { success: true }
 })
-exports.toggleStaffStatus = functions.https.onCall(async (data, context) => {
-  assertAdmin(context)
 
-  const { staffId, isActive } = data
+exports.toggleStaffStatus = onCall(async (request) => {
+  assertAdmin(request)
+
+  const { staffId, isActive } = request.data
 
   if (!staffId) {
-    throw new functions.https.HttpsError('invalid-argument', 'Staff ID required')
+    throw new HttpsError('invalid-argument', 'Staff ID required')
   }
 
   await db.collection('staff').doc(staffId).update({
@@ -214,13 +179,15 @@ exports.toggleStaffStatus = functions.https.onCall(async (data, context) => {
   return { success: true }
 })
 
-exports.createService = functions.https.onCall(async (data, context) => {
-  assertAdmin(context)
+/* ---------------- SERVICES (ADMIN) ---------------- */
 
-  const { name, category, price, duration } = data
+exports.createService = onCall(async (request) => {
+  assertAdmin(request)
+
+  const { name, category, price, duration } = request.data
 
   if (!name || !category || !price || !duration) {
-    throw new functions.https.HttpsError('invalid-argument', 'All service fields are required')
+    throw new HttpsError('invalid-argument', 'Invalid service data')
   }
 
   const ref = db.collection('services').doc()
@@ -236,13 +203,14 @@ exports.createService = functions.https.onCall(async (data, context) => {
 
   return { success: true, serviceId: ref.id }
 })
-exports.updateService = functions.https.onCall(async (data, context) => {
-  assertAdmin(context)
 
-  const { serviceId, name, category, price, duration } = data
+exports.updateService = onCall(async (request) => {
+  assertAdmin(request)
+
+  const { serviceId, name, category, price, duration } = request.data
 
   if (!serviceId) {
-    throw new functions.https.HttpsError('invalid-argument', 'Service ID required')
+    throw new HttpsError('invalid-argument', 'Service ID required')
   }
 
   await db.collection('services').doc(serviceId).update({
@@ -255,13 +223,14 @@ exports.updateService = functions.https.onCall(async (data, context) => {
 
   return { success: true }
 })
-exports.toggleServiceStatus = functions.https.onCall(async (data, context) => {
-  assertAdmin(context)
 
-  const { serviceId, isActive } = data
+exports.toggleServiceStatus = onCall(async (request) => {
+  assertAdmin(request)
+
+  const { serviceId, isActive } = request.data
 
   if (!serviceId) {
-    throw new functions.https.HttpsError('invalid-argument', 'Service ID required')
+    throw new HttpsError('invalid-argument', 'Service ID required')
   }
 
   await db.collection('services').doc(serviceId).update({
@@ -271,7 +240,15 @@ exports.toggleServiceStatus = functions.https.onCall(async (data, context) => {
 
   return { success: true }
 })
-exports.makeMeAdmin = functions.https.onCall(async (data, context) => {
-  await admin.auth().setCustomUserClaims(context.auth.uid, { admin: true })
-  return { success: true }
-})
+
+// /* ---------------- ADMIN BOOTSTRAP (TEMPORARY) ---------------- */
+
+// exports.makeMeAdmin = onCall(async (request) => {
+//   assertAuth(request)
+
+//   await admin.auth().setCustomUserClaims(request.auth.uid, {
+//     admin: true
+//   })
+
+//   return { success: true }
+// })

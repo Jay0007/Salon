@@ -162,7 +162,6 @@ import {
   getDocs,
   query,
   orderBy,
-  getAuth,
   createService,
   updateService,
   toggleServiceStatus
@@ -174,6 +173,7 @@ const services = ref([])
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
+
 const categories = ['Hair', 'Makeup', 'Facial', 'Bridal', 'Nails']
 
 const form = ref({
@@ -202,7 +202,7 @@ const groupedServices = computed(() => {
 async function loadServices() {
   loading.value = true
   services.value = []
-  console.log('User UID:', getAuth().currentUser?.uid)
+
   const q = query(collection(db, 'services'), orderBy('createdAt', 'desc'))
   const snap = await getDocs(q)
 
@@ -224,18 +224,23 @@ async function saveService() {
 
   saving.value = true
 
-  if (editingId.value) {
-    await updateService({
-      serviceId: editingId.value,
-      ...form.value
-    })
-  } else {
-    await createService(form.value)
-  }
+  try {
+    if (editingId.value) {
+      await updateService({
+        serviceId: editingId.value,
+        ...form.value
+      })
+    } else {
+      await createService(form.value)
+    }
 
-  resetForm()
-  await loadServices()
-  saving.value = false
+    resetForm()
+    await loadServices()
+  } catch (e) {
+    error.value = e.message || 'Failed to save service'
+  } finally {
+    saving.value = false
+  }
 }
 
 function editService(service) {
@@ -249,11 +254,15 @@ function editService(service) {
 }
 
 async function toggleStatus(service) {
-  await toggleServiceStatus({
-    serviceId: service.id,
-    isActive: !service.isActive
-  })
-  await loadServices()
+  try {
+    await toggleServiceStatus({
+      serviceId: service.id,
+      isActive: !service.isActive
+    })
+    await loadServices()
+  } catch (e) {
+    error.value = e.message || 'Failed to update status'
+  }
 }
 
 function resetForm() {

@@ -118,10 +118,17 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { db, collection, getDocs } from '@/services/firebase'
-
+import { db, collection, getDocs, getAuth, onAuthStateChanged } from '@/services/firebase'
+import { getFunctions, httpsCallable } from 'firebase/functions'
 /* ---------------- State ---------------- */
+const auth = getAuth()
 
+onAuthStateChanged(auth, async (user) => {
+  if (!user) return // NOT logged in → do nothing
+
+  // user is logged in, SAFE to call admin functions now
+  await loadStaff() // or loadServices()
+})
 const services = ref([])
 const staff = ref([])
 
@@ -210,6 +217,9 @@ function serviceName(id) {
 /* ---------------- Lifecycle ---------------- */
 
 onMounted(async () => {
+  // const fn = httpsCallable(getFunctions(), 'makeMeAdmin')
+  // await fn()
+  // console.log('Admin claim set')
   await loadServices()
   await loadStaff()
 })
