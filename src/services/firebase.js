@@ -69,7 +69,7 @@ setPersistence(auth, browserLocalPersistence).catch((err) => {
 // --- Booking Helpers ---
 
 // --- Booking via Cloud Function ---
-async function createBooking({ serviceId, serviceName, date, time }) {
+async function createBooking({ serviceId, startAt, endAt }) {
   if (!auth.currentUser) {
     throw new Error('User not authenticated')
   }
@@ -78,9 +78,8 @@ async function createBooking({ serviceId, serviceName, date, time }) {
 
   const result = await fn({
     serviceId,
-    serviceName,
-    date,
-    time
+    startAt,
+    endAt
   })
 
   return result.data
@@ -96,32 +95,6 @@ async function cancelBooking(bookingId) {
 async function rescheduleBooking({ bookingId, newStartAt, newEndAt }) {
   const fn = httpsCallable(functions, 'rescheduleBooking')
   return (await fn({ bookingId, newStartAt, newEndAt })).data
-}
-
-// Get upcoming bookings
-async function getUpcomingBookings(userId) {
-  const now = new Date().toISOString()
-  const q = query(
-    collection(db, 'bookings'),
-    where('userId', '==', userId),
-    where('bookingDate', '>=', now),
-    orderBy('bookingDate', 'asc')
-  )
-  const snapshot = await getDocs(q)
-  return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-}
-
-// Get past bookings
-async function getPastBookings(userId) {
-  const now = new Date().toISOString()
-  const q = query(
-    collection(db, 'bookings'),
-    where('userId', '==', userId),
-    where('bookingDate', '<', now),
-    orderBy('bookingDate', 'desc')
-  )
-  const snapshot = await getDocs(q)
-  return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
 }
 
 async function createStaff(data) {
@@ -153,22 +126,12 @@ async function toggleStaffStatus(data) {
   return (await fn(data)).data
 }
 
-// Real-time listener for user's bookings (split into upcoming & past)
-function listenToUserBookingsSplit(userId, callback) {
-  const q = query(collection(db, 'bookings'), where('userId', '==', userId))
-  return onSnapshot(q, (snapshot) => {
-    const now = new Date().toISOString()
-    const upcoming = []
-    const past = []
-
-    snapshot.forEach((doc) => {
-      const data = { id: doc.id, ...doc.data() }
-      if (data.bookingDate >= now) upcoming.push(data)
-      else past.push(data)
-    })
-
-    callback({ upcoming, past })
-  })
+async function getGlobalSettings() {
+  const snap = await getDoc(doc(db, 'settings', 'global'))
+  if (!snap.exists()) {
+    throw new Error('Global settings not configured')
+  }
+  return snap.data()
 }
 
 // --- Exports ---
@@ -225,5 +188,6 @@ export {
   toggleStaffStatus,
   createService,
   updateService,
-  toggleServiceStatus
+  toggleServiceStatus,
+  getGlobalSettings
 }

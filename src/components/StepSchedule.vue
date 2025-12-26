@@ -136,9 +136,8 @@ watch([selectedDate, selectedTime], () => {
   end.setMinutes(end.getMinutes() + props.duration)
 
   emit('update:modelValue', {
-    date: selectedDate.value,
-    startTime: start,
-    endTime: end
+    startAt: start.toISOString(),
+    endAt: end.toISOString()
   })
 
   error.value = ''

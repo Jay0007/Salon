@@ -1,36 +1,46 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import HomePage from '../views/HomePage.vue'
-import ServicesPage from '../views/ServicesPage.vue'
-import AboutPage from '../views/AboutPage.vue'
-import ContactPage from '../views/ContactPage.vue'
-import Login from '../views/Login.vue'
-import Register from '../views/Register.vue'
-import ClientDashboard from '../views/ClientDashboard.vue'
+import { auth, onAuthStateChanged } from '@/services/firebase'
+
+import HomePage from '@/views/HomePage.vue'
+import ServicesPage from '@/views/ServicesPage.vue'
+import AboutPage from '@/views/AboutPage.vue'
+import ContactPage from '@/views/ContactPage.vue'
+import Login from '@/views/Login.vue'
+import Register from '@/views/Register.vue'
+import ClientDashboard from '@/views/ClientDashboard.vue'
 import UserProfile from '@/views/UserProfile.vue'
-import manageServices from '@/pages/admin/manageServices.vue'
-import manageStaff from '@/pages/admin/manageStaff.vue'
-import { auth } from '../services/firebase'
+import ManageServices from '@/pages/admin/manageServices.vue'
+import ManageStaff from '@/pages/admin/manageStaff.vue'
 
 const routes = [
   { path: '/', component: HomePage },
   { path: '/services', component: ServicesPage },
   { path: '/about', component: AboutPage },
   { path: '/contact', component: ContactPage },
+
   { path: '/login', component: Login },
   { path: '/register', component: Register },
-  { path: '/dashboard', component: ClientDashboard, meta: { requiresAuth: true } },
-  { path: '/profile', name: 'profile', component: UserProfile, meta: { requiresAuth: true } },
+
   {
-    path: '/admin/manageservices',
-    name: 'manageServices',
-    component: manageServices,
+    path: '/dashboard',
+    component: ClientDashboard,
     meta: { requiresAuth: true }
   },
   {
-    path: '/admin/managestaff',
-    name: 'manageStaff',
-    component: manageStaff,
+    path: '/profile',
+    component: UserProfile,
     meta: { requiresAuth: true }
+  },
+
+  {
+    path: '/admin/manageservices',
+    component: ManageServices,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/admin/managestaff',
+    component: ManageStaff,
+    meta: { requiresAuth: true, requiresAdmin: true }
   }
 ]
 
@@ -38,16 +48,36 @@ const router = createRouter({
   history: createWebHistory(),
   routes
 })
-router.beforeEach((to, from, next) => {
-  const requiresAuth = to.meta.requiresAuth
-  const isAuthenticated = !!auth.currentUser // after onAuthStateChanged runs
 
-  if (requiresAuth && !isAuthenticated) {
+// ---- AUTH RESOLUTION HELPER ----
+function getCurrentUser() {
+  return new Promise((resolve) => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      unsub()
+      resolve(user)
+    })
+  })
+}
+
+// ---- GLOBAL GUARD ----
+router.beforeEach(async (to, from, next) => {
+  const user = await getCurrentUser()
+
+  if (to.meta.requiresAuth && !user) {
     return next('/login')
   }
-  if ((to.path === '/login' || to.path === '/register') && isAuthenticated) {
+
+  if (to.meta.requiresAdmin && user) {
+    const token = await user.getIdTokenResult()
+    if (!token.claims.admin) {
+      return next('/dashboard')
+    }
+  }
+
+  if ((to.path === '/login' || to.path === '/register') && user) {
     return next('/dashboard')
   }
+
   next()
 })
 

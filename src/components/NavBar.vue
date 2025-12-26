@@ -42,10 +42,10 @@
           </ul>
         </li>
 
-        <li v-if="!isLoggedIn && isAdmin">
+        <li v-if="!isLoggedIn" class="relative group">
           <router-link to="/login" class="nav-link">Login</router-link>
         </li>
-        <li v-if="!isLoggedIn && isAdmin">
+        <li v-if="!isLoggedIn" class="relative group">
           <router-link to="/register" class="nav-link">Register</router-link>
         </li>
       </ul>
@@ -84,7 +84,7 @@
             <router-link to="/contact" @click="close" class="mobile-link">Contact</router-link>
           </li>
 
-          <template v-if="isLoggedIn && isAdmin">
+          <template v-if="isLoggedIn">
             <li>
               <router-link to="/dashboard" @click="close" class="mobile-link"
                 >Dashboard</router-link
@@ -100,12 +100,12 @@
               <ul
                 class="absolute top-full mt-2 w-40 right-0 bg-white border rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200"
               >
-                <li>
+                <li v-if="isAdmin">
                   <router-link to="/admin/manageservices" class="dropdown-link"
                     >Manage Services</router-link
                   >
                 </li>
-                <li>
+                <li v-if="isAdmin">
                   <router-link to="/admin/managestaff" class="dropdown-link"
                     >Manage Staff</router-link
                   >
@@ -116,7 +116,6 @@
               <button @click="(logout(), close())" class="mobile-link text-red-500">Logout</button>
             </li>
           </template>
-
           <template v-else>
             <li><router-link to="/login" @click="close" class="mobile-link">Login</router-link></li>
             <li>
@@ -138,8 +137,6 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { auth, onAuthStateChanged, signOut } from '@/services/firebase'
-import { functions } from '@/services/firebase'
-import { httpsCallable } from 'firebase/functions'
 
 const open = ref(false)
 const isLoggedIn = ref(false)
@@ -157,18 +154,8 @@ onMounted(() => {
 
     isLoggedIn.value = true
 
-    // 🔹 TEMPORARY ADMIN BOOTSTRAP (SAFE)
-    try {
-      // Ensure token is attached BEFORE calling callable function
-      await user.getIdToken(true)
-    } catch (e) {
-      // ignore if already admin or function removed
-    }
-
-    // 🔹 READ CLAIMS AFTER AUTH IS READY
-    // const token = await user.getIdTokenResult(true)
-    // console.log(token)
-    // isAdmin.value = token.claims.admin === true
+    const token = await user.getIdTokenResult()
+    isAdmin.value = token.claims.admin === true
   })
 })
 

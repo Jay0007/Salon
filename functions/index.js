@@ -23,29 +23,96 @@ function assertAdmin(request) {
 
 /* ---------------- BOOKINGS ---------------- */
 
-exports.createBooking = onCall(async (request) => {
-  assertAuth(request)
-
-  const { serviceId, serviceName, date, time } = request.data
-  const uid = request.auth.uid
-
-  if (!serviceId || !serviceName || !date || !time) {
-    throw new HttpsError('invalid-argument', 'Missing booking details')
+exports.createBooking = onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new HttpsError('unauthenticated', 'Login required')
   }
 
+  const { serviceIds, startAt, endAt } = data
+
+  if (!Array.isArray(serviceIds) || serviceIds.length === 0) {
+    throw new HttpsError('invalid-argument', 'At least one service required')
+  }
+  if (!startAt || !endAt) {
+    throw new HttpsError('invalid-argument', 'Missing time range')
+  }
+
+  const start = admin.firestore.Timestamp.fromDate(new Date(startAt))
+  const end = admin.firestore.Timestamp.fromDate(new Date(endAt))
+
+  /* 1️⃣ Load services */
+  const serviceSnaps = await Promise.all(
+    serviceIds.map((id) => db.collection('services').doc(id).get())
+  )
+
+  let totalDuration = 0
+  let totalPrice = 0
+
+  for (const snap of serviceSnaps) {
+    if (!snap.exists || snap.data().isActive !== true) {
+      throw new HttpsError('not-found', 'One or more services unavailable')
+    }
+    totalDuration += snap.data().duration
+    totalPrice += snap.data().price
+  }
+
+  /* 2️⃣ Find eligible staff (must handle ALL services) */
+  const staffSnap = await db.collection('staff').where('isActive', '==', true).get()
+
+  if (staffSnap.empty) {
+    throw new HttpsError('failed-precondition', 'No staff available')
+  }
+
+  let assignedStaffId = null
+
+  for (const staffDoc of staffSnap.docs) {
+    const staff = staffDoc.data()
+
+    const canDoAll = serviceIds.every(
+      (sid) => Array.isArray(staff.services) && staff.services.includes(sid)
+    )
+    if (!canDoAll) continue
+
+    const conflictSnap = await db
+      .collection('bookings')
+      .where('staffId', '==', staffDoc.id)
+      .where('status', '==', 'confirmed')
+      .where('startAt', '<', end)
+      .where('endAt', '>', start)
+      .get()
+
+    if (conflictSnap.empty) {
+      assignedStaffId = staffDoc.id
+      break
+    }
+  }
+
+  if (!assignedStaffId) {
+    throw new HttpsError('already-exists', 'No staff available for selected time')
+  }
+
+  /* 3️⃣ Create booking */
   const bookingRef = db.collection('bookings').doc()
 
   await bookingRef.set({
-    userId: uid,
-    serviceId,
-    serviceName,
-    date,
-    time,
+    userId: context.auth.uid,
+    serviceIds,
+    staffId: assignedStaffId,
+
+    startAt: start,
+    endAt: end,
+
+    totalDuration,
+    totalPrice,
+
     status: 'confirmed',
     createdAt: admin.firestore.FieldValue.serverTimestamp()
   })
 
-  return { success: true, bookingId: bookingRef.id }
+  return {
+    success: true,
+    bookingId: bookingRef.id
+  }
 })
 
 exports.cancelBooking = onCall(async (request) => {

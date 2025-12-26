@@ -60,11 +60,17 @@
 
         <button
           @click="saveStaff"
-          class="px-8 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+          :disabled="saving"
+          class="px-8 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
         >
-          {{ editingId ? 'Update Staff' : 'Add Staff' }}
+          {{ saving ? 'Saving…' : editingId ? 'Update Staff' : 'Add Staff' }}
         </button>
       </div>
+    </section>
+    <section>
+      <p v-if="error" class="mt-4 text-sm text-red-600">
+        {{ error }}
+      </p>
     </section>
 
     <!-- Staff List -->
@@ -118,19 +124,22 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { db, collection, getDocs, getAuth, onAuthStateChanged } from '@/services/firebase'
-import { getFunctions, httpsCallable } from 'firebase/functions'
+import {
+  db,
+  collection,
+  getDocs,
+  createStaff,
+  updateStaff,
+  toggleStaffStatus
+} from '@/services/firebase'
+
 /* ---------------- State ---------------- */
-const auth = getAuth()
 
-onAuthStateChanged(auth, async (user) => {
-  if (!user) return // NOT logged in → do nothing
-
-  // user is logged in, SAFE to call admin functions now
-  await loadStaff() // or loadServices()
-})
 const services = ref([])
 const staff = ref([])
+const loading = ref(true)
+const saving = ref(false)
+const error = ref('')
 
 const form = ref({
   name: '',
@@ -160,28 +169,39 @@ async function loadStaff() {
 /* ---------------- Actions ---------------- */
 
 async function saveStaff() {
+  if (saving.value) return
+  error.value = ''
+
   if (!form.value.name || !form.value.services.length) {
-    alert('Staff name and at least one service is required')
+    error.value = 'Staff name and at least one service is required'
     return
   }
 
-  if (editingId.value) {
-    await updateStaff({
-      staffId: editingId.value,
-      name: form.value.name,
-      services: form.value.services,
-      isActive: form.value.isActive
-    })
-  } else {
-    await createStaff({
-      name: form.value.name,
-      services: form.value.services,
-      isActive: form.value.isActive
-    })
-  }
+  saving.value = true
 
-  resetForm()
-  await loadStaff()
+  try {
+    if (editingId.value) {
+      await updateStaff({
+        staffId: editingId.value,
+        name: form.value.name,
+        services: form.value.services,
+        isActive: form.value.isActive
+      })
+    } else {
+      await createStaff({
+        name: form.value.name,
+        services: form.value.services,
+        isActive: form.value.isActive
+      })
+    }
+
+    resetForm()
+    await loadStaff()
+  } catch (e) {
+    error.value = e.message || 'Failed to save staff'
+  } finally {
+    saving.value = false
+  }
 }
 
 function editStaff(member) {
@@ -194,15 +214,20 @@ function editStaff(member) {
 }
 
 async function toggleStatus(member) {
+  if (!confirm(`Are you sure you want to ${member.isActive ? 'disable' : 'enable'} this staff?`))
+    return
+
   await toggleStaffStatus({
     staffId: member.id,
     isActive: !member.isActive
   })
+
   await loadStaff()
 }
 
 function resetForm() {
   editingId.value = null
+  error.value = ''
   form.value = {
     name: '',
     isActive: true,
@@ -217,10 +242,9 @@ function serviceName(id) {
 /* ---------------- Lifecycle ---------------- */
 
 onMounted(async () => {
-  // const fn = httpsCallable(getFunctions(), 'makeMeAdmin')
-  // await fn()
-  // console.log('Admin claim set')
+  loading.value = true
   await loadServices()
   await loadStaff()
+  loading.value = false
 })
 </script>
