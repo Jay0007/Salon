@@ -158,6 +158,7 @@
 import { ref, computed, onMounted } from 'vue'
 import {
   db,
+  auth,
   collection,
   getDocs,
   query,
@@ -278,5 +279,16 @@ function resetForm() {
 
 /* ---------------- Lifecycle ---------------- */
 
-onMounted(loadServices)
+onMounted(async () => {
+  try {
+    // 🔴 CRITICAL: ensure latest admin claim is attached
+    if (auth.currentUser) {
+      await auth.currentUser.getIdToken(true)
+    }
+
+    await loadServices()
+  } catch (e) {
+    error.value = e?.details || e?.message || 'Failed to save service'
+  }
+})
 </script>

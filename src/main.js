@@ -1,19 +1,17 @@
 import './assets/main.css'
-
 import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router'
-import { auth } from './services/firebase'
-import { onAuthStateChanged } from 'firebase/auth'
+import { auth, onAuthStateChanged } from '@/services/firebase'
+import { bootstrapSession } from '@/helpers/sessionBootstrap'
 
-let app // we’ll mount this exactly once
+const app = createApp(App)
 
 onAuthStateChanged(auth, (user) => {
-  // you could provide `user` to your app here via provide/inject or a store
-  if (!app) {
-    app = createApp(App)
-      .use(router)
-      .provide('currentUser', user) // optional: inject into any component
-      .mount('#app')
+  if (user) {
+    bootstrapSession(user)
   }
 })
+
+app.use(router)
+app.mount('#app')

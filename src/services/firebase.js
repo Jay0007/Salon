@@ -67,6 +67,10 @@ setPersistence(auth, browserLocalPersistence).catch((err) => {
 })
 
 // --- Booking Helpers ---
+async function refreshTokenIfNeeded() {
+  if (!auth.currentUser) throw new Error('Not authenticated')
+  await auth.currentUser.getIdToken(true)
+}
 
 // --- Booking via Cloud Function ---
 async function createBooking({ serviceId, startAt, endAt }) {
@@ -117,6 +121,7 @@ async function updateService(data) {
 }
 
 async function toggleServiceStatus(data) {
+  await refreshTokenIfNeeded()
   const fn = httpsCallable(functions, 'toggleServiceStatus')
   return (await fn(data)).data
 }
@@ -180,9 +185,6 @@ export {
   createBooking,
   cancelBooking,
   rescheduleBooking,
-  getUpcomingBookings,
-  getPastBookings,
-  listenToUserBookingsSplit,
   createStaff,
   updateStaff,
   toggleStaffStatus,

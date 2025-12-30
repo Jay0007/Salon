@@ -104,6 +104,10 @@
               </span>
             </div>
           </div>
+          <div class="flex items-center gap-2 mt-2">
+            <span class="text-xs text-gray-500">Admin</span>
+            <input type="checkbox" :checked="member.isAdmin" @change="toggleAdmin(member)" />
+          </div>
 
           <div class="flex flex-col gap-2 text-sm">
             <button class="text-indigo-600 hover:underline" @click="editStaff(member)">Edit</button>
@@ -132,7 +136,8 @@ import {
   updateStaff,
   toggleStaffStatus
 } from '@/services/firebase'
-
+import { httpsCallable } from 'firebase/functions'
+import { functions } from '@/services/firebase'
 /* ---------------- State ---------------- */
 
 const services = ref([])
@@ -148,6 +153,27 @@ const form = ref({
 })
 
 const editingId = ref(null)
+
+const setStaffAdmin = httpsCallable(functions, 'setStaffAdmin')
+
+async function toggleAdmin(member) {
+  if (!member.userId) {
+    alert('Staff must have an account to become admin')
+    return
+  }
+
+  try {
+    await setStaffAdmin({
+      userId: member.userId,
+      staffId: member.id,
+      makeAdmin: !member.isAdmin
+    })
+
+    member.isAdmin = !member.isAdmin
+  } catch (err) {
+    alert(err.message || 'Failed to update admin role')
+  }
+}
 
 /* ---------------- Load Data ---------------- */
 

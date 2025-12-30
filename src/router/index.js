@@ -61,7 +61,7 @@ function getCurrentUser() {
 
 // ---- GLOBAL GUARD ----
 router.beforeEach(async (to, from, next) => {
-  const user = await getCurrentUser()
+  const user = auth.currentUser
 
   if (to.meta.requiresAuth && !user) {
     return next('/login')
@@ -72,10 +72,6 @@ router.beforeEach(async (to, from, next) => {
     if (!token.claims.admin) {
       return next('/dashboard')
     }
-  }
-
-  if ((to.path === '/login' || to.path === '/register') && user) {
-    return next('/dashboard')
   }
 
   next()
