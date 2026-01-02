@@ -121,17 +121,12 @@ function selectSlot(slot) {
 
 watch(selectedDate, loadSlots)
 watch(
-  () => props.serviceIds,
+  () => [props.serviceIds, props.preferredStaffMap],
   () => {
-    slots.value = []
-    selectedSlot.value = null
-  }
-)
-watch(
-  () => props.preferredStaffMap,
-  () => {
-    slots.value = []
-    selectedSlot.value = null
-  }
+    if (selectedDate.value) {
+      loadSlots()
+    }
+  },
+  { deep: true }
 )
 </script>

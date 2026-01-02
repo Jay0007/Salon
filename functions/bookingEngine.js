@@ -105,15 +105,16 @@ async function findAvailableSlots(serviceIds, preferredStaffMap, startDate) {
 
   const dayEnd = new Date(startDate)
   dayEnd.setHours(CLOSE_HOUR, 0, 0, 0)
-
+  const dayBookings = await loadBookings(dayStart, dayEnd)
+  const dayLocks = await loadLocks(dayStart, dayEnd)
   for (
     let slot = new Date(dayStart);
     addMinutes(slot, totalDuration) <= dayEnd;
     slot = addMinutes(slot, SLOT_STEP_MINUTES)
   ) {
     const slotEnd = addMinutes(slot, totalDuration)
-    const bookings = await loadBookings(slot, slotEnd)
-    const locks = await loadLocks(slot, slotEnd)
+    const bookings = dayBookings
+    const locks = dayLocks
 
     if (locks.length) continue
 
@@ -140,15 +141,15 @@ async function findAvailableSlots(serviceIds, preferredStaffMap, startDate) {
 
     if (valid) {
       results.push({
-        startAt: slot,
-        endAt: slotEnd,
+        startAt: slot.toISOString(),
+        endAt: slotEnd.toISOString(),
         staffAssignments,
         totalDuration,
         totalPrice
       })
     }
 
-    if (results.length >= 10) break
+    if (results.length >= 40) break
   }
 
   return results
