@@ -1,8 +1,6 @@
 // functions/bookingEngine.js
 const { db, admin } = require('./firebaseAdmin')
 
-const OPEN_HOUR = 10
-const CLOSE_HOUR = 20
 const SLOT_STEP_MINUTES = 15
 const LOCK_DURATION_MINUTES = 5
 
@@ -14,6 +12,32 @@ function overlaps(aStart, aEnd, bStart, bEnd) {
 
 function addMinutes(date, mins) {
   return new Date(date.getTime() + mins * 60000)
+}
+async function getSalonSettings() {
+  const snap = await db.collection('settings').doc('salon').get()
+
+  if (!snap.exists) {
+    // Safe defaults (IST)
+    return {
+      timezone: 'Asia/Kolkata',
+      timezoneOffsetMinutes: 330,
+      openHour: 10,
+      closeHour: 20
+    }
+  }
+
+  return snap.data()
+}
+
+function setTimeInSalonTimezone(baseDate, hour, minute, offsetMinutes) {
+  // baseDate is ISO date received from frontend
+  const d = new Date(baseDate)
+
+  // Convert desired salon time → UTC
+  const utcMinutes = hour * 60 + minute - offsetMinutes
+
+  d.setUTCHours(0, utcMinutes, 0, 0)
+  return d
 }
 
 /* ---------------- LOAD DATA ---------------- */
@@ -100,13 +124,22 @@ async function findAvailableSlots(serviceIds, preferredStaffMap, startDate) {
   const staff = await loadStaff()
   const results = []
 
-  const dayStart = new Date(startDate)
-  dayStart.setHours(OPEN_HOUR, 0, 0, 0)
+  // Salon timezone offset in minutes (IST = +330)
+  const salon = await getSalonSettings()
 
-  const dayEnd = new Date(startDate)
-  dayEnd.setHours(CLOSE_HOUR, 0, 0, 0)
+  const dayStart = setTimeInSalonTimezone(startDate, salon.openHour, 0, salon.timezoneOffsetMinutes)
+
+  const dayEnd = setTimeInSalonTimezone(startDate, salon.closeHour, 0, salon.timezoneOffsetMinutes)
+
   const dayBookings = await loadBookings(dayStart, dayEnd)
   const dayLocks = await loadLocks(dayStart, dayEnd)
+  const normalizedLocks = dayLocks
+    .filter((l) => l.startAt && l.endAt)
+    .map((l) => ({
+      ...l,
+      startAt: l.startAt.toDate ? l.startAt.toDate() : l.startAt,
+      endAt: l.endAt.toDate ? l.endAt.toDate() : l.endAt
+    }))
   for (
     let slot = new Date(dayStart);
     addMinutes(slot, totalDuration) <= dayEnd;
@@ -114,7 +147,7 @@ async function findAvailableSlots(serviceIds, preferredStaffMap, startDate) {
   ) {
     const slotEnd = addMinutes(slot, totalDuration)
     const bookings = dayBookings
-    const locks = dayLocks
+    const locks = normalizedLocks
 
     if (locks.length) continue
 
@@ -160,9 +193,16 @@ async function findAvailableSlots(serviceIds, preferredStaffMap, startDate) {
 async function validateAndAssignStaff({ serviceIds, preferredStaffMap, startAt, endAt }) {
   const staff = await loadStaff()
   const bookings = await loadBookings(startAt, endAt)
-  const locks = await loadLocks(startAt, endAt)
+  const rawLocks = await loadLocks(startAt, endAt)
 
-  if (locks.length) {
+  const locks = rawLocks
+    .filter((l) => l.startAt && l.endAt)
+    .map((l) => ({
+      startAt: l.startAt.toDate ? l.startAt.toDate() : l.startAt,
+      endAt: l.endAt.toDate ? l.endAt.toDate() : l.endAt
+    }))
+
+  if (locks.some((l) => overlaps(startAt, endAt, l.startAt, l.endAt))) {
     return { available: false, reason: 'Slot temporarily locked' }
   }
 

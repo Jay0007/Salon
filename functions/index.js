@@ -1,6 +1,11 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { admin, db } = require('./firebaseAdmin')
-const { findAvailableSlots, validateSlot } = require('./bookingEngine')
+const {
+  findAvailableSlots,
+  validateAndAssignStaff, // ✅ ADD THIS
+  createSlotLock,
+  rotateStaffPriority
+} = require('./bookingEngine')
 
 function assertAuth(request) {
   if (!request.auth) {

@@ -1,20 +1,20 @@
 <template>
   <div class="space-y-6">
-    <!-- Select Date -->
+    <!-- Date -->
     <div>
       <label class="block text-sm font-medium text-gray-700 mb-1"> Select Date </label>
       <input
         type="date"
         v-model="selectedDate"
         :min="today"
-        class="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500"
+        class="w-full border rounded-lg px-3 py-2"
       />
     </div>
 
     <!-- Loading -->
     <p v-if="loading" class="text-sm text-gray-500">Checking availability…</p>
 
-    <!-- Time Slots -->
+    <!-- Slots -->
     <div v-if="!loading && slots.length">
       <label class="block text-sm font-medium text-gray-700 mb-3"> Select Time </label>
 
@@ -22,10 +22,10 @@
         <button
           v-for="slot in slots"
           :key="slot.startAt"
-          @click="selectSlot(slot)"
+          @click="select(slot)"
           class="py-2 rounded-lg text-sm border transition"
           :class="
-            selectedSlot?.startAt === slot.startAt
+            modelValue?.startAt === slot.startAt
               ? 'bg-indigo-600 text-white border-indigo-600'
               : 'bg-white hover:border-indigo-500'
           "
@@ -35,7 +35,6 @@
       </div>
     </div>
 
-    <!-- No Slots -->
     <p v-if="!loading && selectedDate && !slots.length" class="text-sm text-gray-500">
       No slots available for this date.
     </p>
@@ -46,26 +45,17 @@
 import { ref, watch } from 'vue'
 import { findAvailableSlots } from '@/services/firebase'
 
-/* ---------------- Props / Emits ---------------- */
-
 const props = defineProps({
-  serviceIds: {
-    type: Array,
-    required: true
-  },
-  preferredStaffMap: {
-    type: Object,
-    required: true
-  }
+  serviceIds: { type: Array, required: true },
+  preferredStaffMap: { type: Object, required: true },
+  modelValue: Object
 })
 
-const emit = defineEmits(['update'])
-
-/* ---------------- State ---------------- */
-
+const emit = defineEmits(['update:modelValue'])
+let currentRequestId = 0
+let lastFetchKey = ''
 const selectedDate = ref(null)
 const slots = ref([])
-const selectedSlot = ref(null)
 const loading = ref(false)
 
 const today = new Date().toISOString().split('T')[0]
@@ -82,51 +72,56 @@ function formatTime(iso) {
 /* ---------------- Slot Fetch ---------------- */
 
 async function loadSlots() {
-  if (!selectedDate.value) return
+  if (!selectedDate.value || !props.serviceIds.length) return
+  const fetchKey = JSON.stringify({
+    date: selectedDate.value,
+    services: props.serviceIds,
+    staff: props.preferredStaffMap
+  })
 
+  // 🔒 Prevent unnecessary reloads
+  if (fetchKey === lastFetchKey) return
+  lastFetchKey = fetchKey
+  const requestId = ++currentRequestId
   loading.value = true
   slots.value = []
-  selectedSlot.value = null
 
   try {
-    const dateISO = new Date(selectedDate.value).toISOString()
+    const [year, month, day] = selectedDate.value.split('-').map(Number)
+    const localDate = new Date(year, month - 1, day, 0, 0, 0)
 
     const result = await findAvailableSlots({
       serviceIds: props.serviceIds,
       preferredStaffMap: props.preferredStaffMap,
-      startAt: dateISO
+      startAt: localDate.toISOString()
     })
 
+    // 🔒 Ignore outdated responses
+    if (requestId !== currentRequestId) return
+
     slots.value = result || []
-  } catch (err) {
-    console.error('Failed to load slots', err)
-    slots.value = []
+  } catch (e) {
+    console.error('Failed to load slots', e)
   } finally {
-    loading.value = false
+    if (requestId === currentRequestId) {
+      loading.value = false
+    }
   }
 }
-
 /* ---------------- Slot Selection ---------------- */
-
-function selectSlot(slot) {
-  selectedSlot.value = slot
-
-  emit('update', {
+function select(slot) {
+  emit('update:modelValue', {
     startAt: slot.startAt,
     endAt: slot.endAt
   })
 }
 
-/* ---------------- Watchers ---------------- */
-
-watch(selectedDate, loadSlots)
 watch(
-  () => [props.serviceIds, props.preferredStaffMap],
-  () => {
-    if (selectedDate.value) {
-      loadSlots()
-    }
-  },
-  { deep: true }
+  () => ({
+    date: selectedDate.value,
+    services: props.serviceIds.join(','),
+    staff: JSON.stringify(props.preferredStaffMap)
+  }),
+  loadSlots
 )
 </script>

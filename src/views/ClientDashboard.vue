@@ -46,7 +46,7 @@
               v-if="step === 4"
               :service-ids="selectedServices.map((s) => s.id)"
               :preferred-staff-map="staffAssignments"
-              @update="handleScheduleUpdate"
+              v-model="booking"
             />
 
             <!-- Controls -->
