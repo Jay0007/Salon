@@ -44,7 +44,8 @@
             <!-- STEP 4 -->
             <StepSchedule
               v-if="step === 4"
-              :duration="totalDuration"
+              :service-ids="selectedServices.map((s) => s.id)"
+              :preferred-staff-map="staffAssignments"
               @update="handleScheduleUpdate"
             />
 

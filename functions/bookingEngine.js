@@ -3,8 +3,8 @@ const { db, admin } = require('./firebaseAdmin')
 
 const OPEN_HOUR = 10
 const CLOSE_HOUR = 20
-const SLOT_MINUTES = 15
-const MAX_DAYS = 60
+const SLOT_STEP_MINUTES = 15
+const LOCK_DURATION_MINUTES = 5
 
 /* ---------------- HELPERS ---------------- */
 
@@ -24,12 +24,19 @@ async function loadServices(serviceIds) {
   let totalDuration = 0
   let totalPrice = 0
 
-  snaps.forEach((s) => {
-    if (!s.exists || s.data().isActive !== true) {
-      throw new Error('Service unavailable')
+  snaps.forEach((s, idx) => {
+    if (!s.exists) {
+      throw new Error(`Service not found: ${serviceIds[idx]}`)
     }
-    totalDuration += s.data().duration
-    totalPrice += s.data().price
+
+    const d = s.data()
+
+    if (typeof d.duration !== 'number' || typeof d.price !== 'number') {
+      throw new Error(`Invalid service data: ${serviceIds[idx]}`)
+    }
+
+    totalDuration += d.duration
+    totalPrice += d.price
   })
 
   return { totalDuration, totalPrice }
@@ -37,7 +44,7 @@ async function loadServices(serviceIds) {
 
 async function loadStaff() {
   const snap = await db.collection('staff').where('isActive', '==', true).get()
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((s) => Array.isArray(s.services))
 }
 
 async function loadBookings(from, to) {
@@ -54,121 +61,130 @@ async function loadBookings(from, to) {
     endAt: d.data().endAt.toDate()
   }))
 }
+async function loadLocks(startAt, endAt) {
+  const snap = await db
+    .collection('slotLocks')
+    .where('startAt', '<', endAt)
+    .where('endAt', '>', startAt)
+    .get()
 
-/* ---------------- CORE ENGINE ---------------- */
+  return snap.docs.map((d) => d.data())
+}
 
-async function findAvailableSlots(serviceIds, preferredStaffMap = {}, startDate) {
+/* ---------------- Staff selection ---------------- */
+
+function selectStaff({ staff, serviceId, preferred, bookings, startAt, endAt }) {
+  const eligible = staff
+    .filter(
+      (s) =>
+        s.services.includes(serviceId) && (!preferred || preferred === 'ANY' || s.id === preferred)
+    )
+    .sort((a, b) => (a.priorityIndex || 0) - (b.priorityIndex || 0))
+
+  for (const s of eligible) {
+    const conflict = bookings.some(
+      (b) =>
+        b.staffAssignments?.[serviceId] === s.id && overlaps(startAt, endAt, b.startAt, b.endAt)
+    )
+
+    if (!conflict) return s.id
+  }
+
+  return null
+}
+
+/* ---------------- SLOT DISCOVERY (UI ONLY) ---------------- */
+
+async function findAvailableSlots(serviceIds, preferredStaffMap, startDate) {
   const { totalDuration, totalPrice } = await loadServices(serviceIds)
   const staff = await loadStaff()
   const results = []
 
-  for (let dayOffset = 0; dayOffset < MAX_DAYS; dayOffset++) {
-    const day = new Date(startDate)
-    day.setDate(day.getDate() + dayOffset)
+  const dayStart = new Date(startDate)
+  dayStart.setHours(OPEN_HOUR, 0, 0, 0)
 
-    const dayStart = new Date(day)
-    dayStart.setHours(OPEN_HOUR, 0, 0, 0)
+  const dayEnd = new Date(startDate)
+  dayEnd.setHours(CLOSE_HOUR, 0, 0, 0)
 
-    const dayEnd = new Date(day)
-    dayEnd.setHours(CLOSE_HOUR, 0, 0, 0)
+  for (
+    let slot = new Date(dayStart);
+    addMinutes(slot, totalDuration) <= dayEnd;
+    slot = addMinutes(slot, SLOT_STEP_MINUTES)
+  ) {
+    const slotEnd = addMinutes(slot, totalDuration)
+    const bookings = await loadBookings(slot, slotEnd)
+    const locks = await loadLocks(slot, slotEnd)
 
-    const bookings = await loadBookings(dayStart, dayEnd)
+    if (locks.length) continue
 
-    for (
-      let slot = new Date(dayStart);
-      addMinutes(slot, totalDuration) <= dayEnd;
-      slot = addMinutes(slot, SLOT_MINUTES)
-    ) {
-      const slotEnd = addMinutes(slot, totalDuration)
-      const staffAssignments = {}
-      let valid = true
+    const staffAssignments = {}
+    let valid = true
 
-      for (const serviceId of serviceIds) {
-        const preferred = preferredStaffMap[serviceId]
+    for (const serviceId of serviceIds) {
+      const staffId = selectStaff({
+        staff,
+        serviceId,
+        preferred: preferredStaffMap?.[serviceId],
+        bookings,
+        startAt: slot,
+        endAt: slotEnd
+      })
 
-        const eligible = staff
-          .filter(
-            (s) =>
-              s.services.includes(serviceId) &&
-              (!preferred || preferred === 'ANY' || s.id === preferred)
-          )
-          .sort(() => Math.random() - 0.5) // ✅ load balancing
-
-        let assigned = null
-
-        for (const s of eligible) {
-          const conflicts = bookings.some(
-            (b) =>
-              b.staffAssignments?.[serviceId] === s.id &&
-              overlaps(slot, slotEnd, b.startAt, b.endAt)
-          )
-          if (!conflicts) {
-            assigned = s.id
-            break
-          }
-        }
-
-        if (!assigned) {
-          valid = false
-          break
-        }
-
-        staffAssignments[serviceId] = assigned
+      if (!staffId) {
+        valid = false
+        break
       }
 
-      if (!valid) continue
+      staffAssignments[serviceId] = staffId
+    }
 
+    if (valid) {
       results.push({
-        startAt: new Date(slot),
+        startAt: slot,
         endAt: slotEnd,
         staffAssignments,
         totalDuration,
         totalPrice
       })
-
-      if (results.length >= 10) return results
     }
+
+    if (results.length >= 10) break
   }
 
   return results
 }
 
-async function validateSlot({ serviceIds, preferredStaffMap, startDate, endDate }) {
+/* ---------------- VALIDATION (BOOK / RESCHEDULE) ---------------- */
+
+async function validateAndAssignStaff({ serviceIds, preferredStaffMap, startAt, endAt }) {
   const staff = await loadStaff()
-  const bookings = await loadBookings(startDate, endDate)
-  const { totalDuration, totalPrice } = await loadServices(serviceIds)
+  const bookings = await loadBookings(startAt, endAt)
+  const locks = await loadLocks(startAt, endAt)
+
+  if (locks.length) {
+    return { available: false, reason: 'Slot temporarily locked' }
+  }
 
   const staffAssignments = {}
 
   for (const serviceId of serviceIds) {
-    const preferred = preferredStaffMap[serviceId]
+    const staffId = selectStaff({
+      staff,
+      serviceId,
+      preferred: preferredStaffMap?.[serviceId],
+      bookings,
+      startAt,
+      endAt
+    })
 
-    const eligible = staff.filter(
-      (s) =>
-        s.services.includes(serviceId) && (!preferred || preferred === 'ANY' || s.id === preferred)
-    )
-
-    let assigned = null
-
-    for (const s of eligible) {
-      const conflict = bookings.some(
-        (b) =>
-          b.staffAssignments?.[serviceId] === s.id &&
-          overlaps(startDate, endDate, b.startAt, b.endAt)
-      )
-
-      if (!conflict) {
-        assigned = s.id
-        break
-      }
+    if (!staffId) {
+      return { available: false, reason: 'No staff available' }
     }
 
-    if (!assigned) {
-      return { available: false, reason: `No staff available for service` }
-    }
-
-    staffAssignments[serviceId] = assigned
+    staffAssignments[serviceId] = staffId
   }
+
+  const { totalDuration, totalPrice } = await loadServices(serviceIds)
 
   return {
     available: true,
@@ -178,4 +194,40 @@ async function validateSlot({ serviceIds, preferredStaffMap, startDate, endDate 
   }
 }
 
-module.exports = { findAvailableSlots, validateSlot }
+/* ---------------- SLOT LOCK ---------------- */
+
+async function createSlotLock({ userId, startAt, endAt, staffAssignments }) {
+  const expiresAt = admin.firestore.Timestamp.fromDate(
+    new Date(Date.now() + LOCK_DURATION_MINUTES * 60000)
+  )
+
+  await db.collection('slotLocks').add({
+    userId,
+    startAt,
+    endAt,
+    staffAssignments,
+    expiresAt
+  })
+}
+
+/* ---------------- STAFF ROTATION ---------------- */
+
+async function rotateStaffPriority(staffAssignments) {
+  const batch = db.batch()
+
+  Object.values(staffAssignments).forEach((staffId) => {
+    const ref = db.collection('staff').doc(staffId)
+    batch.update(ref, {
+      priorityIndex: admin.firestore.FieldValue.increment(1)
+    })
+  })
+
+  await batch.commit()
+}
+
+module.exports = {
+  findAvailableSlots,
+  validateAndAssignStaff,
+  createSlotLock,
+  rotateStaffPriority
+}

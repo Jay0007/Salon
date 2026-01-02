@@ -58,59 +58,125 @@ exports.getAvailableSlots = onCall({ invoker: 'public' }, async (request) => {
 
 /* ---------------- BOOKINGS ---------------- */
 
-exports.createBooking = onCall({ invoker: 'public' }, async (request) => {
+/* ---------------- FIND SLOTS ---------------- */
+
+exports.findAvailableSlots = onCall({ invoker: 'public' }, async (request) => {
   try {
     assertAuth(request)
 
-    const { serviceIds, preferredStaffMap = {}, startAt, endAt, bookingFor } = request.data
+    const { serviceIds, preferredStaffMap, startAt } = request.data || {}
 
-    if (!Array.isArray(serviceIds) || !serviceIds.length) {
-      throw new HttpsError('invalid-argument', 'Invalid services')
+    if (!Array.isArray(serviceIds) || !startAt) {
+      throw new HttpsError('invalid-argument', 'Invalid request')
     }
 
-    const startDate = new Date(startAt)
-    const endDate = new Date(endAt)
+    const date = new Date(startAt)
 
-    if (isNaN(startDate) || isNaN(endDate) || startDate >= endDate) {
-      throw new HttpsError('invalid-argument', 'Invalid time window')
-    }
-
-    // 🔒 Atomic validation
-    const availability = await validateSlot({
-      serviceIds,
-      preferredStaffMap,
-      startDate,
-      endDate
-    })
-
-    if (!availability.available) {
-      throw new HttpsError('already-exists', availability.reason)
-    }
-
-    const ref = db.collection('bookings').doc()
-
-    await ref.set({
-      userId: request.auth.uid,
-      bookingFor: bookingFor || null,
-
-      serviceIds,
-      staffAssignments: availability.staffAssignments,
-
-      startAt: admin.firestore.Timestamp.fromDate(startDate),
-      endAt: admin.firestore.Timestamp.fromDate(endDate),
-
-      totalDuration: availability.totalDuration,
-      totalPrice: availability.totalPrice,
-
-      status: 'confirmed',
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    })
-
-    return { success: true, bookingId: ref.id }
+    return await findAvailableSlots(serviceIds, preferredStaffMap || {}, date)
   } catch (err) {
+    console.error('FIND AVAILABLE SLOTS FAILED', err)
+
     if (err instanceof HttpsError) throw err
-    throw new HttpsError('internal', err.message)
+
+    throw new HttpsError('internal', err.message || 'Failed to load slots')
   }
+})
+
+/* ---------------- CREATE BOOKING ---------------- */
+
+exports.createBooking = onCall({ invoker: 'public' }, async (request) => {
+  assertAuth(request)
+
+  const { serviceIds, preferredStaffMap, startAt, endAt, bookingFor } = request.data || {}
+
+  if (!Array.isArray(serviceIds) || !startAt || !endAt) {
+    throw new HttpsError('invalid-argument', 'Invalid booking data')
+  }
+
+  const startDate = new Date(startAt)
+  const endDate = new Date(endAt)
+
+  const result = await validateAndAssignStaff({
+    serviceIds,
+    preferredStaffMap,
+    startAt: startDate,
+    endAt: endDate
+  })
+
+  if (!result.available) {
+    throw new HttpsError('already-exists', result.reason)
+  }
+
+  await createSlotLock({
+    userId: request.auth.uid,
+    startAt: admin.firestore.Timestamp.fromDate(startDate),
+    endAt: admin.firestore.Timestamp.fromDate(endDate),
+    staffAssignments: result.staffAssignments
+  })
+
+  const ref = db.collection('bookings').doc()
+
+  await ref.set({
+    userId: request.auth.uid,
+    bookingFor: bookingFor || null,
+    serviceIds,
+    staffAssignments: result.staffAssignments,
+    startAt: admin.firestore.Timestamp.fromDate(startDate),
+    endAt: admin.firestore.Timestamp.fromDate(endDate),
+    totalDuration: result.totalDuration,
+    totalPrice: result.totalPrice,
+    status: 'confirmed',
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  })
+
+  await rotateStaffPriority(result.staffAssignments)
+
+  return { success: true, bookingId: ref.id }
+})
+
+/* ---------------- RESCHEDULE BOOKING ---------------- */
+
+exports.rescheduleBooking = onCall({ invoker: 'public' }, async (request) => {
+  assertAuth(request)
+
+  const { bookingId, newStartAt, newEndAt } = request.data || {}
+
+  const ref = db.collection('bookings').doc(bookingId)
+  const snap = await ref.get()
+
+  if (!snap.exists) {
+    throw new HttpsError('not-found', 'Booking not found')
+  }
+
+  const booking = snap.data()
+
+  if (booking.userId !== request.auth.uid) {
+    throw new HttpsError('permission-denied')
+  }
+
+  const startDate = new Date(newStartAt)
+  const endDate = new Date(newEndAt)
+
+  const result = await validateAndAssignStaff({
+    serviceIds: booking.serviceIds,
+    preferredStaffMap: booking.staffAssignments,
+    startAt: startDate,
+    endAt: endDate
+  })
+
+  if (!result.available) {
+    throw new HttpsError('already-exists', result.reason)
+  }
+
+  await ref.update({
+    startAt: admin.firestore.Timestamp.fromDate(startDate),
+    endAt: admin.firestore.Timestamp.fromDate(endDate),
+    staffAssignments: result.staffAssignments
+  })
+
+  await rotateStaffPriority(result.staffAssignments)
+
+  return { success: true }
 })
 
 exports.cancelBooking = onCall({ invoker: 'public' }, async (request) => {
@@ -122,31 +188,6 @@ exports.cancelBooking = onCall({ invoker: 'public' }, async (request) => {
 
   return { success: true }
 })
-
-exports.rescheduleBooking = onCall({ invoker: 'public' }, async (request) => {
-  assertAuth(request)
-
-  const snap = await db.collection('bookings').doc(request.data.bookingId).get()
-  if (!snap.exists) {
-    throw new HttpsError('not-found', 'Booking missing')
-  }
-
-  const booking = snap.data()
-  const result = await findAvailableSlots(booking.serviceIds, {}, new Date(request.data.date))
-
-  if (!result) {
-    throw new HttpsError('already-exists', 'No slot')
-  }
-
-  await snap.ref.update({
-    startAt: admin.firestore.Timestamp.fromDate(result.startAt),
-    endAt: admin.firestore.Timestamp.fromDate(result.endAt),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
-  })
-
-  return { success: true }
-})
-
 /* ---------------- STAFF (ADMIN) ---------------- */
 
 exports.createStaff = onCall({ invoker: 'public' }, async (request) => {

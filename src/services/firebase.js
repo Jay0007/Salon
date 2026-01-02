@@ -148,6 +148,21 @@ async function getGlobalSettings() {
   }
   return snap.data()
 }
+async function findAvailableSlots({ serviceIds, preferredStaffMap, startAt }) {
+  if (!auth.currentUser) {
+    throw new Error('User not authenticated')
+  }
+
+  const fn = httpsCallable(functions, 'findAvailableSlots')
+
+  const result = await fn({
+    serviceIds,
+    preferredStaffMap,
+    startAt
+  })
+
+  return result.data
+}
 
 // --- Exports ---
 export {
@@ -201,5 +216,6 @@ export {
   createService,
   updateService,
   toggleServiceStatus,
-  getGlobalSettings
+  getGlobalSettings,
+  findAvailableSlots
 }
