@@ -25,7 +25,7 @@
           :class="[
             slot.disabled
               ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-              : selectedTime === slot.label
+              : selectedSlot?.label === slot.label
                 ? 'bg-indigo-600 text-white border-indigo-600'
                 : 'bg-white hover:border-indigo-500'
           ]"
@@ -36,7 +36,7 @@
     </div>
 
     <!-- Summary -->
-    <div v-if="selectedTime" class="bg-indigo-50 border border-indigo-200 rounded-lg p-4 text-sm">
+    <div v-if="selectedSlot" class="bg-indigo-50 border border-indigo-200 rounded-lg p-4 text-sm">
       <p>
         <span class="font-medium">Start:</span>
         {{ formattedStart }}
@@ -47,8 +47,6 @@
       </p>
       <p class="text-gray-600 mt-1">Duration: {{ duration }} minutes</p>
     </div>
-
-    <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
   </div>
 </template>
 
@@ -56,61 +54,44 @@
 import { ref, computed, watch } from 'vue'
 
 const props = defineProps({
-  modelValue: Object,
-  duration: {
-    type: Number,
-    required: true
-  }
+  duration: { type: Number, required: true }
 })
 
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update'])
 
-const selectedDate = ref('')
-const selectedTime = ref('')
-const error = ref('')
+const selectedDate = ref(null)
+const selectedSlot = ref(null)
 
 const today = new Date().toISOString().split('T')[0]
 
-/**
- * Generate all slots (10:00 → 20:00)
- */
 function generateSlots() {
   const slots = []
   for (let h = 10; h < 20; h++) {
     for (let m of [0, 15, 30, 45]) {
-      slots.push({
-        h,
-        m,
-        label: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
-      })
+      slots.push({ h, m })
     }
   }
   return slots
 }
 
-/**
- * Filter slots:
- * - No past time
- * - Must fit duration before closing
- */
 const validSlots = computed(() => {
   if (!selectedDate.value) return []
 
   const now = new Date()
-  const slots = generateSlots()
 
-  return slots.map((slot) => {
+  return generateSlots().map((s) => {
     const start = new Date(selectedDate.value)
-    start.setHours(slot.h, slot.m, 0, 0)
+    start.setHours(s.h, s.m, 0, 0)
 
     const end = new Date(start)
     end.setMinutes(end.getMinutes() + props.duration)
 
-    const disabled =
-      start < now || end.getHours() >= 20 || (end.getHours() === 20 && end.getMinutes() > 0)
+    const disabled = start < now || end.getHours() > 20
 
     return {
-      ...slot,
+      label: `${String(s.h).padStart(2, '0')}:${String(s.m).padStart(2, '0')}`,
+      start,
+      end,
       disabled
     }
   })
@@ -118,43 +99,16 @@ const validSlots = computed(() => {
 
 function selectSlot(slot) {
   if (slot.disabled) return
-  selectedTime.value = slot.label
+
+  selectedSlot.value = slot
+
+  emit('update', {
+    startAt: slot.start.toISOString(),
+    endAt: slot.end.toISOString()
+  })
 }
 
-/**
- * Emit start + end time
- */
-watch([selectedDate, selectedTime], () => {
-  if (!selectedDate.value || !selectedTime.value) return
-
-  const [h, m] = selectedTime.value.split(':').map(Number)
-
-  const start = new Date(selectedDate.value)
-  start.setHours(h, m, 0, 0)
-
-  const end = new Date(start)
-  end.setMinutes(end.getMinutes() + props.duration)
-
-  emit('update:modelValue', {
-    startAt: start.toISOString(),
-    endAt: end.toISOString()
-  })
-
-  error.value = ''
-})
-
-const formattedStart = computed(() =>
-  new Date(`${selectedDate.value}T${selectedTime.value}`).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit'
-  })
-)
-
-const formattedEnd = computed(() => {
-  if (!selectedDate.value || !selectedTime.value) return ''
-  const [h, m] = selectedTime.value.split(':').map(Number)
-  const d = new Date(selectedDate.value)
-  d.setHours(h, m + props.duration, 0, 0)
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+watch(selectedDate, () => {
+  selectedSlot.value = null
 })
 </script>

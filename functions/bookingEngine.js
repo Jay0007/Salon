@@ -57,9 +57,10 @@ async function loadBookings(from, to) {
 
 /* ---------------- CORE ENGINE ---------------- */
 
-async function findEarliestSlot(serviceIds, preferredStaffMap = {}, startDate) {
+async function findAvailableSlots(serviceIds, preferredStaffMap = {}, startDate) {
   const { totalDuration, totalPrice } = await loadServices(serviceIds)
   const staff = await loadStaff()
+  const results = []
 
   for (let dayOffset = 0; dayOffset < MAX_DAYS; dayOffset++) {
     const day = new Date(startDate)
@@ -79,49 +80,102 @@ async function findEarliestSlot(serviceIds, preferredStaffMap = {}, startDate) {
       slot = addMinutes(slot, SLOT_MINUTES)
     ) {
       const slotEnd = addMinutes(slot, totalDuration)
-
-      // Resolve staff per service
       const staffAssignments = {}
+      let valid = true
 
       for (const serviceId of serviceIds) {
+        const preferred = preferredStaffMap[serviceId]
+
+        const eligible = staff
+          .filter(
+            (s) =>
+              s.services.includes(serviceId) &&
+              (!preferred || preferred === 'ANY' || s.id === preferred)
+          )
+          .sort(() => Math.random() - 0.5) // ✅ load balancing
+
         let assigned = null
 
-        const eligible = staff.filter((s) => s.services.includes(serviceId))
-
         for (const s of eligible) {
-          const conflicts = bookings.filter(
+          const conflicts = bookings.some(
             (b) =>
               b.staffAssignments?.[serviceId] === s.id &&
               overlaps(slot, slotEnd, b.startAt, b.endAt)
           )
-
-          if (!conflicts.length) {
+          if (!conflicts) {
             assigned = s.id
             break
           }
         }
 
         if (!assigned) {
-          assigned = null
+          valid = false
           break
         }
 
         staffAssignments[serviceId] = assigned
       }
 
-      if (Object.values(staffAssignments).some((v) => !v)) continue
+      if (!valid) continue
 
-      return {
-        startAt: slot,
+      results.push({
+        startAt: new Date(slot),
         endAt: slotEnd,
         staffAssignments,
         totalDuration,
         totalPrice
-      }
+      })
+
+      if (results.length >= 10) return results
     }
   }
 
-  return null
+  return results
 }
 
-module.exports = { findEarliestSlot }
+async function validateSlot({ serviceIds, preferredStaffMap, startDate, endDate }) {
+  const staff = await loadStaff()
+  const bookings = await loadBookings(startDate, endDate)
+  const { totalDuration, totalPrice } = await loadServices(serviceIds)
+
+  const staffAssignments = {}
+
+  for (const serviceId of serviceIds) {
+    const preferred = preferredStaffMap[serviceId]
+
+    const eligible = staff.filter(
+      (s) =>
+        s.services.includes(serviceId) && (!preferred || preferred === 'ANY' || s.id === preferred)
+    )
+
+    let assigned = null
+
+    for (const s of eligible) {
+      const conflict = bookings.some(
+        (b) =>
+          b.staffAssignments?.[serviceId] === s.id &&
+          overlaps(startDate, endDate, b.startAt, b.endAt)
+      )
+
+      if (!conflict) {
+        assigned = s.id
+        break
+      }
+    }
+
+    if (!assigned) {
+      return { available: false, reason: `No staff available for service` }
+    }
+
+    staffAssignments[serviceId] = assigned
+  }
+
+  return {
+    available: true,
+    staffAssignments,
+    totalDuration,
+    totalPrice
+  }
+}
+
+module.exports = { findAvailableSlots, validateSlot }

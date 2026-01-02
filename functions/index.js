@@ -1,22 +1,37 @@
-// functions/index.js
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { admin, db } = require('./firebaseAdmin')
-const { findEarliestSlot } = require('./bookingEngine')
+const { findAvailableSlots, validateSlot } = require('./bookingEngine')
 
-function assertAuth(ctx) {
-  if (!ctx.auth) throw new HttpsError('unauthenticated', 'Login required')
-}
-
-function assertAdmin(ctx) {
-  if (!ctx.auth || ctx.auth.token.admin !== true) {
-    throw new HttpsError('permission-denied', 'Admin only')
+function assertAuth(request) {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Login required')
   }
 }
 
-exports.getAvailableDates = onCall({ invoker: 'public' }, async (data, ctx) => {
-  assertAuth(ctx)
+function assertAdmin(request) {
+  console.log('--- ASSERT ADMIN CHECK ---')
 
-  const { serviceIds } = data
+  if (!request.auth) {
+    console.error('FAIL: No auth context')
+    throw new HttpsError('unauthenticated', 'User is not authenticated')
+  }
+
+  console.log('UID:', request.auth.uid)
+  console.log('Token claims:', JSON.stringify(request.auth.token, null, 2))
+
+  if (request.auth.token.admin !== true) {
+    throw new HttpsError('permission-denied', 'Admin only')
+  }
+
+  console.log('PASS: Admin verified')
+}
+
+/* ---------------- AVAILABILITY ---------------- */
+
+exports.getAvailableDates = onCall({ invoker: 'public' }, async (request) => {
+  assertAuth(request)
+
+  const { serviceIds } = request.data
   if (!serviceIds?.length) return []
 
   const dates = []
@@ -26,76 +41,102 @@ exports.getAvailableDates = onCall({ invoker: 'public' }, async (data, ctx) => {
     const d = new Date(today)
     d.setDate(d.getDate() + i)
 
-    const result = await findEarliestSlot(serviceIds, {}, d)
+    const result = await findAvailableSlots(serviceIds, {}, d)
     if (result) dates.push(d.toISOString().split('T')[0])
   }
 
   return dates
 })
 
-exports.getAvailableSlots = onCall({ invoker: 'public' }, async (data, ctx) => {
-  assertAuth(ctx)
+exports.getAvailableSlots = onCall({ invoker: 'public' }, async (request) => {
+  assertAuth(request)
 
-  const { serviceIds, date } = data
-  const slots = []
+  const { serviceIds, date, preferredStaffMap } = request.data
 
-  const base = new Date(date)
-  const result = await findEarliestSlot(serviceIds, {}, base)
-
-  if (!result) return []
-
-  slots.push({
-    startAt: result.startAt,
-    endAt: result.endAt
-  })
-
-  return slots
+  return await findAvailableSlots(serviceIds, preferredStaffMap || {}, new Date(date))
 })
 
 /* ---------------- BOOKINGS ---------------- */
 
-exports.createBooking = onCall({ invoker: 'public' }, async (data, ctx) => {
-  assertAuth(ctx)
+exports.createBooking = onCall({ invoker: 'public' }, async (request) => {
+  try {
+    assertAuth(request)
 
-  const { serviceIds, date } = data
-  const result = await findEarliestSlot(serviceIds, {}, new Date(date))
+    const { serviceIds, preferredStaffMap = {}, startAt, endAt, bookingFor } = request.data
 
-  if (!result) throw new HttpsError('already-exists', 'No slot')
+    if (!Array.isArray(serviceIds) || !serviceIds.length) {
+      throw new HttpsError('invalid-argument', 'Invalid services')
+    }
 
-  const ref = db.collection('bookings').doc()
-  await ref.set({
-    userId: ctx.auth.uid,
-    serviceIds,
-    staffAssignments: result.staffAssignments,
-    startAt: admin.firestore.Timestamp.fromDate(result.startAt),
-    endAt: admin.firestore.Timestamp.fromDate(result.endAt),
-    totalDuration: result.totalDuration,
-    totalPrice: result.totalPrice,
-    status: 'confirmed',
-    createdAt: admin.firestore.FieldValue.serverTimestamp()
-  })
+    const startDate = new Date(startAt)
+    const endDate = new Date(endAt)
 
-  return { success: true, bookingId: ref.id }
+    if (isNaN(startDate) || isNaN(endDate) || startDate >= endDate) {
+      throw new HttpsError('invalid-argument', 'Invalid time window')
+    }
+
+    // 🔒 Atomic validation
+    const availability = await validateSlot({
+      serviceIds,
+      preferredStaffMap,
+      startDate,
+      endDate
+    })
+
+    if (!availability.available) {
+      throw new HttpsError('already-exists', availability.reason)
+    }
+
+    const ref = db.collection('bookings').doc()
+
+    await ref.set({
+      userId: request.auth.uid,
+      bookingFor: bookingFor || null,
+
+      serviceIds,
+      staffAssignments: availability.staffAssignments,
+
+      startAt: admin.firestore.Timestamp.fromDate(startDate),
+      endAt: admin.firestore.Timestamp.fromDate(endDate),
+
+      totalDuration: availability.totalDuration,
+      totalPrice: availability.totalPrice,
+
+      status: 'confirmed',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    })
+
+    return { success: true, bookingId: ref.id }
+  } catch (err) {
+    if (err instanceof HttpsError) throw err
+    throw new HttpsError('internal', err.message)
+  }
 })
 
-exports.cancelBooking = onCall({ invoker: 'public' }, async (data, ctx) => {
-  assertAuth(ctx)
-  await db.collection('bookings').doc(data.bookingId).update({
+exports.cancelBooking = onCall({ invoker: 'public' }, async (request) => {
+  assertAuth(request)
+
+  await db.collection('bookings').doc(request.data.bookingId).update({
     status: 'cancelled'
   })
+
   return { success: true }
 })
 
-exports.rescheduleBooking = onCall({ invoker: 'public' }, async (data, ctx) => {
-  assertAuth(ctx)
+exports.rescheduleBooking = onCall({ invoker: 'public' }, async (request) => {
+  assertAuth(request)
 
-  const snap = await db.collection('bookings').doc(data.bookingId).get()
-  if (!snap.exists) throw new HttpsError('not-found', 'Booking missing')
+  const snap = await db.collection('bookings').doc(request.data.bookingId).get()
+  if (!snap.exists) {
+    throw new HttpsError('not-found', 'Booking missing')
+  }
 
   const booking = snap.data()
-  const result = await findEarliestSlot(booking.serviceIds, {}, new Date(data.date))
+  const result = await findAvailableSlots(booking.serviceIds, {}, new Date(request.data.date))
 
-  if (!result) throw new HttpsError('already-exists', 'No slot')
+  if (!result) {
+    throw new HttpsError('already-exists', 'No slot')
+  }
 
   await snap.ref.update({
     startAt: admin.firestore.Timestamp.fromDate(result.startAt),
@@ -106,11 +147,12 @@ exports.rescheduleBooking = onCall({ invoker: 'public' }, async (data, ctx) => {
   return { success: true }
 })
 
-// staff admin
-exports.createStaff = onCall({ invoker: 'public' }, async (data, context) => {
-  assertAdmin(context)
+/* ---------------- STAFF (ADMIN) ---------------- */
 
-  const { name, services, isActive } = data
+exports.createStaff = onCall({ invoker: 'public' }, async (request) => {
+  assertAdmin(request)
+
+  const { name, services, isActive } = request.data
   if (!name || !Array.isArray(services) || !services.length) {
     throw new HttpsError('invalid-argument', 'Invalid staff data')
   }
@@ -118,7 +160,6 @@ exports.createStaff = onCall({ invoker: 'public' }, async (data, context) => {
   const ref = db.collection('staff').doc()
   await ref.set({
     name,
-    email,
     services,
     userId: null,
     isAdmin: false,
@@ -129,10 +170,10 @@ exports.createStaff = onCall({ invoker: 'public' }, async (data, context) => {
   return { success: true, staffId: ref.id }
 })
 
-exports.updateStaff = onCall({ invoker: 'public' }, async (data, context) => {
-  assertAdmin(context)
+exports.updateStaff = onCall({ invoker: 'public' }, async (request) => {
+  assertAdmin(request)
 
-  const { staffId, ...rest } = data
+  const { staffId, ...rest } = request.data
   if (!staffId) {
     throw new HttpsError('invalid-argument', 'Staff ID required')
   }
@@ -144,14 +185,13 @@ exports.updateStaff = onCall({ invoker: 'public' }, async (data, context) => {
       ...rest,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     })
-
   return { success: true }
 })
 
-exports.toggleStaffStatus = onCall({ invoker: 'public' }, async (data, context) => {
-  assertAdmin(context)
+exports.toggleStaffStatus = onCall({ invoker: 'public' }, async (request) => {
+  assertAdmin(request)
 
-  const { staffId, isActive } = data
+  const { staffId, isActive } = request.data
   if (!staffId) {
     throw new HttpsError('invalid-argument', 'Staff ID required')
   }
@@ -163,13 +203,10 @@ exports.toggleStaffStatus = onCall({ invoker: 'public' }, async (data, context) 
 
   return { success: true }
 })
+exports.createService = onCall({ invoker: 'public' }, async (request) => {
+  assertAdmin(request)
 
-/* ---------------- SERVICES (ADMIN) ---------------- */
-
-exports.createService = onCall({ invoker: 'public' }, async (data, context) => {
-  assertAdmin(context)
-
-  const { name, category, price, duration } = data
+  const { name, category, price, duration } = request.data
   if (!name || !category || !price || !duration) {
     throw new HttpsError('invalid-argument', 'Invalid service data')
   }
@@ -187,10 +224,10 @@ exports.createService = onCall({ invoker: 'public' }, async (data, context) => {
   return { success: true, serviceId: ref.id }
 })
 
-exports.updateService = onCall({ invoker: 'public' }, async (data, context) => {
-  assertAdmin(context)
+exports.updateService = onCall({ invoker: 'public' }, async (request) => {
+  assertAdmin(request)
 
-  const { serviceId, ...rest } = data
+  const { serviceId, ...rest } = request.data
   if (!serviceId) {
     throw new HttpsError('invalid-argument', 'Service ID required')
   }
@@ -206,10 +243,10 @@ exports.updateService = onCall({ invoker: 'public' }, async (data, context) => {
   return { success: true }
 })
 
-exports.toggleServiceStatus = onCall({ invoker: 'public' }, async (data, context) => {
-  assertAdmin(context)
+exports.toggleServiceStatus = onCall({ invoker: 'public' }, async (request) => {
+  assertAdmin(request)
 
-  const { serviceId, isActive } = data
+  const { serviceId, isActive } = request.data
   if (!serviceId) {
     throw new HttpsError('invalid-argument', 'Service ID required')
   }
@@ -222,12 +259,12 @@ exports.toggleServiceStatus = onCall({ invoker: 'public' }, async (data, context
   return { success: true }
 })
 
-// Staff admin
-exports.linkStaffAccount = onCall({ invoker: 'public' }, async (_, ctx) => {
-  assertAuth(ctx)
+exports.linkStaffAccount = onCall({ invoker: 'public' }, async (request) => {
+  assertAuth(request)
 
-  const user = await admin.auth().getUser(ctx.auth.uid)
+  const user = await admin.auth().getUser(request.auth.uid)
   const email = user.email
+  if (!email) return { linked: false }
 
   const snap = await db.collection('staff').where('email', '==', email).limit(1).get()
 
@@ -236,14 +273,14 @@ exports.linkStaffAccount = onCall({ invoker: 'public' }, async (_, ctx) => {
   const staffDoc = snap.docs[0]
 
   await staffDoc.ref.update({
-    userId: ctx.auth.uid,
+    userId: request.auth.uid,
     isActive: true,
     updatedAt: admin.firestore.FieldValue.serverTimestamp()
   })
 
   const existingClaims = user.customClaims || {}
 
-  await admin.auth().setCustomUserClaims(ctx.auth.uid, {
+  await admin.auth().setCustomUserClaims(request.auth.uid, {
     ...existingClaims,
     staff: true,
     admin: existingClaims.admin === true || staffDoc.data().isAdmin === true
@@ -252,10 +289,10 @@ exports.linkStaffAccount = onCall({ invoker: 'public' }, async (_, ctx) => {
   return { linked: true }
 })
 
-exports.setStaffAdmin = onCall({ invoker: 'public' }, async (data, ctx) => {
-  assertAdmin(ctx)
+exports.setStaffAdmin = onCall({ invoker: 'public' }, async (request) => {
+  assertAdmin(request)
 
-  const { staffId, isAdmin } = data
+  const { staffId, isAdmin } = request.data
   const ref = db.collection('staff').doc(staffId)
   const snap = await ref.get()
 

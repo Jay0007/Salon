@@ -12,6 +12,10 @@ import UserProfile from '@/views/UserProfile.vue'
 import ManageServices from '@/pages/admin/manageServices.vue'
 import ManageStaff from '@/pages/admin/manageStaff.vue'
 
+/* --------------------------------------------------
+   Routes
+-------------------------------------------------- */
+
 const routes = [
   { path: '/', component: HomePage },
   { path: '/services', component: ServicesPage },
@@ -31,7 +35,6 @@ const routes = [
     component: UserProfile,
     meta: { requiresAuth: true }
   },
-
   {
     path: '/admin/manageservices',
     component: ManageServices,
@@ -49,25 +52,50 @@ const router = createRouter({
   routes
 })
 
-// ---- AUTH RESOLUTION HELPER ----
-function getCurrentUser() {
-  return new Promise((resolve) => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      unsub()
+/* --------------------------------------------------
+   AUTH RESOLUTION (RUN ONCE)
+-------------------------------------------------- */
+
+let authResolved = false
+let currentUser = null
+
+const getCurrentUser = () =>
+  new Promise((resolve) => {
+    if (authResolved) {
+      return resolve(currentUser)
+    }
+
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      authResolved = true
+      currentUser = user
+      unsubscribe()
       resolve(user)
     })
   })
-}
 
-// ---- GLOBAL GUARD ----
+/* --------------------------------------------------
+   GLOBAL GUARD (FINAL)
+-------------------------------------------------- */
+
 router.beforeEach(async (to, from, next) => {
-  const user = auth.currentUser
+  const user = await getCurrentUser()
 
+  // 🔒 Requires login
   if (to.meta.requiresAuth && !user) {
     return next('/login')
   }
 
-  if (to.meta.requiresAdmin && user) {
+  // 🔁 Prevent logged-in users from visiting auth pages
+  if ((to.path === '/login' || to.path === '/register') && user) {
+    return next('/dashboard')
+  }
+
+  // 🔒 Admin-only routes
+  if (to.meta.requiresAdmin) {
+    if (!user) {
+      return next('/login')
+    }
+
     const token = await user.getIdTokenResult()
     if (!token.claims.admin) {
       return next('/dashboard')

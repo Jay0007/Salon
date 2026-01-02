@@ -3,9 +3,9 @@
     <!-- Header -->
     <div class="flex justify-between mb-3">
       <div class="text-sm text-gray-600">
-        {{ formatDate(booking.startAt) }}
+        {{ formatDate(startAt) }}
         ·
-        {{ formatTime(booking.startAt) }} – {{ formatTime(booking.endAt) }}
+        {{ formatTime(startAt) }} – {{ formatTime(endAt) }}
       </div>
 
       <span :class="badgeClass">
@@ -14,7 +14,7 @@
     </div>
 
     <!-- Services -->
-    <div v-for="s in booking.services" :key="s.serviceId" class="flex justify-between py-2">
+    <div v-for="s in normalizedServices" :key="s.id" class="flex justify-between py-2">
       <div>
         <p class="font-medium">{{ s.name }}</p>
         <p class="text-xs text-gray-500">{{ s.duration }} min</p>
@@ -46,28 +46,79 @@
 </template>
 
 <script setup>
-defineProps({
-  booking: Object,
+import { computed } from 'vue'
+
+/* ---------------- Props & Emits ---------------- */
+
+const props = defineProps({
+  booking: {
+    type: Object,
+    required: true
+  },
   loadingId: String,
   cancelled: Boolean,
   past: Boolean
 })
 
+defineEmits(['cancel', 'reschedule'])
+
+/* ---------------- Date Normalization ---------------- */
+
+function toDate(value) {
+  if (!value) return null
+  if (value instanceof Date) return value
+  if (value.toDate) return value.toDate() // Firestore Timestamp
+  return new Date(value) // ISO string
+}
+
+const startAt = computed(() => toDate(props.booking.startAt))
+const endAt = computed(() => toDate(props.booking.endAt))
+
+/* ---------------- Formatting ---------------- */
+
 function formatDate(d) {
-  return d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })
+  if (!d) return ''
+  return d.toLocaleDateString('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short'
+  })
 }
 
 function formatTime(d) {
-  return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+  if (!d) return ''
+  return d.toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit'
+  })
 }
 
-const badgeClass = computed(() =>
-  cancelled
-    ? 'text-xs px-3 py-1 rounded-full bg-red-100 text-red-700'
-    : past
-      ? 'text-xs px-3 py-1 rounded-full bg-gray-200 text-gray-700'
-      : 'text-xs px-3 py-1 rounded-full bg-green-100 text-green-700'
-)
+/* ---------------- Services Normalization ---------------- */
 
-const badgeText = computed(() => (cancelled ? 'Cancelled' : past ? 'Completed' : 'Upcoming'))
+const normalizedServices = computed(() => {
+  return Array.isArray(props.booking.services)
+    ? props.booking.services.map((s) => ({
+        id: s.id || s.serviceId,
+        name: s.name,
+        duration: s.duration,
+        price: s.price
+      }))
+    : []
+})
+
+/* ---------------- Status Badge ---------------- */
+
+const badgeClass = computed(() => {
+  if (props.cancelled) {
+    return 'text-xs px-3 py-1 rounded-full bg-red-100 text-red-700'
+  }
+  if (props.past) {
+    return 'text-xs px-3 py-1 rounded-full bg-gray-200 text-gray-700'
+  }
+  return 'text-xs px-3 py-1 rounded-full bg-green-100 text-green-700'
+})
+
+const badgeText = computed(() =>
+  props.cancelled ? 'Cancelled' : props.past ? 'Completed' : 'Upcoming'
+)
 </script>

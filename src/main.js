@@ -7,11 +7,15 @@ import { bootstrapSession } from '@/helpers/sessionBootstrap'
 
 const app = createApp(App)
 
-onAuthStateChanged(auth, (user) => {
-  if (user) {
-    bootstrapSession(user)
-  }
-})
+let bootstrapped = false
 
+onAuthStateChanged(auth, async (user) => {
+  if (!user) return
+
+  // Ensure token is fresh before app actions
+  await user.getIdToken(true)
+
+  bootstrapSession(user)
+})
 app.use(router)
 app.mount('#app')

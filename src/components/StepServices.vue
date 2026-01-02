@@ -51,7 +51,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { db, collection, getDocs, query, where, orderBy } from '@/services/firebase'
 
 /* ---------------- Props / Emits ---------------- */
@@ -59,7 +59,7 @@ import { db, collection, getDocs, query, where, orderBy } from '@/services/fireb
 const props = defineProps({
   modelValue: {
     type: Array,
-    default: () => []
+    required: true
   }
 })
 
@@ -68,7 +68,6 @@ const emit = defineEmits(['update:modelValue'])
 /* ---------------- State ---------------- */
 
 const services = ref([])
-const selected = ref([...props.modelValue])
 const loading = ref(true)
 
 /* ---------------- Computed ---------------- */
@@ -82,22 +81,21 @@ const groupedServices = computed(() => {
   return map
 })
 
-/* ---------------- Methods ---------------- */
-
 function isSelected(id) {
-  return selected.value.some((s) => s.id === id)
+  return props.modelValue.some((s) => s.id === id)
 }
 
+/* ---------------- Methods ---------------- */
+
 function toggle(service) {
-  const index = selected.value.findIndex((s) => s.id === service.id)
+  const exists = props.modelValue.some((s) => s.id === service.id)
 
-  if (index > -1) {
-    selected.value.splice(index, 1)
-  } else {
-    selected.value.push(service)
-  }
+  const next = exists
+    ? props.modelValue.filter((s) => s.id !== service.id)
+    : [...props.modelValue, service]
 
-  emit('update:modelValue', selected.value)
+  // 🔴 ALWAYS emit a new array
+  emit('update:modelValue', next)
 }
 
 async function loadServices() {
@@ -119,11 +117,4 @@ async function loadServices() {
 /* ---------------- Lifecycle ---------------- */
 
 onMounted(loadServices)
-
-watch(
-  () => props.modelValue,
-  (val) => {
-    selected.value = [...val]
-  }
-)
 </script>

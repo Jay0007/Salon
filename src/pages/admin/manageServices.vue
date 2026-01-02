@@ -255,6 +255,10 @@ function editService(service) {
 }
 
 async function toggleStatus(service) {
+  if (!auth.currentUser) {
+    throw new Error('User not authenticated yet')
+  }
+
   try {
     await toggleServiceStatus({
       serviceId: service.id,

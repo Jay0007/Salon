@@ -1,7 +1,6 @@
 // services/firebase.js
 
 // --- Firebase Core Imports ---
-import { initializeApp } from 'firebase/app'
 import {
   getAuth,
   signInWithEmailAndPassword,
@@ -56,7 +55,9 @@ const config = {
 }
 
 // --- Initialize Firebase App ---
-const app = initializeApp(config)
+import { initializeApp, getApps, getApp } from 'firebase/app'
+
+const app = getApps().length ? getApp() : initializeApp(config)
 const auth = getAuth(app)
 const db = getFirestore()
 const functions = getFunctions(app, 'us-central1')
@@ -73,7 +74,7 @@ async function refreshTokenIfNeeded() {
 }
 
 // --- Booking via Cloud Function ---
-async function createBooking({ serviceId, startAt, endAt }) {
+async function createBooking({ serviceIds, preferredStaffMap, startAt, endAt, bookingFor }) {
   if (!auth.currentUser) {
     throw new Error('User not authenticated')
   }
@@ -81,9 +82,11 @@ async function createBooking({ serviceId, startAt, endAt }) {
   const fn = httpsCallable(functions, 'createBooking')
 
   const result = await fn({
-    serviceId,
-    startAt,
-    endAt
+    serviceIds, // ✅ array of service IDs
+    preferredStaffMap, // ✅ { serviceId: staffId | "ANY" }
+    startAt, // ✅ ISO string
+    endAt, // ✅ ISO string
+    bookingFor // ✅ optional metadata
   })
 
   return result.data
@@ -121,9 +124,16 @@ async function updateService(data) {
 }
 
 async function toggleServiceStatus(data) {
-  await refreshTokenIfNeeded()
+  if (!auth.currentUser) {
+    throw new Error('User not authenticated')
+  }
+
+  // Debug: Check if we actually have a user right before the call
+  console.log('Calling toggleServiceStatus as:', auth.currentUser.uid)
+
   const fn = httpsCallable(functions, 'toggleServiceStatus')
-  return (await fn(data)).data
+  const result = await fn(data)
+  return result.data
 }
 
 async function toggleStaffStatus(data) {

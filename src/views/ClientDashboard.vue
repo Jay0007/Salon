@@ -42,7 +42,11 @@
             />
 
             <!-- STEP 4 -->
-            <StepSchedule v-if="step === 4" v-model="booking" :duration="totalDuration" />
+            <StepSchedule
+              v-if="step === 4"
+              :duration="totalDuration"
+              @update="handleScheduleUpdate"
+            />
 
             <!-- Controls -->
             <div class="mt-6 flex justify-between">
@@ -62,7 +66,8 @@
               <button
                 v-if="step === 4"
                 @click="confirmBooking"
-                class="px-4 py-2 bg-indigo-600 text-white rounded"
+                :disabled="!booking.startAt || !booking.endAt"
+                class="px-4 py-2 bg-indigo-600 text-white rounded disabled:opacity-50"
               >
                 Confirm Booking
               </button>
@@ -108,7 +113,7 @@
 /* --------------------------------------------------
    Imports
 -------------------------------------------------- */
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch, watchEffect } from 'vue'
 import { useRouter } from 'vue-router'
 
 import StepBookingFor from '@/components/StepBookingFor.vue'
@@ -116,16 +121,7 @@ import StepServices from '@/components/StepServices.vue'
 import StepSchedule from '@/components/StepSchedule.vue'
 import SelectStaff from '@/components/SelectStaff.vue'
 
-import {
-  auth,
-  onAuthStateChanged,
-  serverTimestamp,
-  db,
-  collection,
-  getDocs,
-  query,
-  where
-} from '@/services/firebase'
+import { auth, onAuthStateChanged } from '@/services/firebase'
 import { createBooking } from '@/services/firebase'
 
 /* --------------------------------------------------
@@ -160,8 +156,8 @@ const selectedServices = ref([])
 const staffAssignments = ref({})
 
 const booking = ref({
-  date: null,
-  startTime: null
+  startAt: null, // ISO string
+  endAt: null // ISO string
 })
 
 /* --------------------------------------------------
@@ -204,9 +200,28 @@ watch(
     })
 
     staffAssignments.value = next
+    console.log(
+      'Selected services:',
+      services.map((s) => s.id)
+    )
+    if (!Array.isArray(services) || services.length === 0) {
+      // Reset downstream steps if services disappear
+      if (step.value > 2) {
+        step.value = 2
+      }
+    }
   },
   { deep: true }
 )
+watchEffect(() => {
+  if (step.value >= 3) {
+    console.assert(
+      selectedServices.value.length > 0,
+      'Selected services missing at step',
+      step.value
+    )
+  }
+})
 
 /* --------------------------------------------------
    Auth Guard
@@ -223,128 +238,55 @@ onMounted(() => {
   })
 })
 
-/* --------------------------------------------------
-   Helpers
--------------------------------------------------- */
-function calculateEndTime(start, duration) {
-  const end = new Date(start)
-  end.setMinutes(end.getMinutes() + duration)
-  return end
+function handleScheduleUpdate({ startAt, endAt }) {
+  booking.value.startAt = startAt
+  booking.value.endAt = endAt
 }
 
-function overlaps(aStart, aEnd, bStart, bEnd) {
-  return aStart < bEnd && bStart < aEnd
-}
-
-/**
- * FINAL, SAFE STAFF RESOLUTION
- * - Resolves ONLY 'ANY'
- * - Prevents overlaps
- * - Never mutates reactive state
- * - Never runs early
- */
-async function resolveAnyStaff(assignments, services, startAt, endAt) {
-  const resolved = { ...assignments }
-
-  // Load staff (public read)
-  const staffSnap = await getDocs(collection(db, 'staff'))
-  const staffList = staffSnap.docs.map((d) => ({
-    id: d.id,
-    ...d.data()
-  }))
-
-  // Load relevant bookings (rules-safe)
-  const bookingSnap = await getDocs(
-    query(collection(db, 'bookings'), where('status', 'in', ['pending', 'confirmed']))
-  )
-
-  const existingBookings = bookingSnap.docs.map((d) => ({
-    ...d.data(),
-    startAt: d.data().startAt.toDate(),
-    endAt: d.data().endAt.toDate()
-  }))
-
-  for (const service of services) {
-    if (resolved[service.id] !== 'ANY') continue
-
-    const eligibleStaff = staffList.filter(
-      (staff) => Array.isArray(staff.services) && staff.services.includes(service.id)
-    )
-
-    const available = eligibleStaff.find((staff) => {
-      const staffBookings = existingBookings.filter(
-        (b) => b.staffAssignments?.[service.id] === staff.id
-      )
-
-      return staffBookings.every((b) => !overlaps(startAt, endAt, b.startAt, b.endAt))
-    })
-
-    if (!available) {
-      throw new Error(`No staff available for ${service.name}`)
-    }
-
-    resolved[service.id] = available.id
-  }
-
-  return resolved
-}
-
-/* --------------------------------------------------
-   Save Booking (ONLY PLACE WHERE AVAILABILITY IS CHECKED)
--------------------------------------------------- */
 async function confirmBooking() {
-  if (!booking.value.startTime) {
-    alert('Please select date and time')
+  if (
+    !booking.value.startAt ||
+    !booking.value.endAt ||
+    !Array.isArray(selectedServices.value) ||
+    selectedServices.value.length === 0
+  ) {
+    alert('Please select services and time')
     return
   }
 
-  const startAt = booking.value.startTime
-  const endAt = calculateEndTime(startAt, totalDuration.value)
+  const serviceIds = selectedServices.value.map((s) => s.id).filter(Boolean)
 
-  let finalStaffAssignments
-
-  try {
-    finalStaffAssignments = await resolveAnyStaff(
-      staffAssignments.value,
-      selectedServices.value,
-      startAt,
-      endAt
-    )
-  } catch (err) {
-    console.error(err)
+  if (serviceIds.length !== selectedServices.value.length) {
+    alert('Invalid service selection. Please reselect services.')
     return
   }
 
-  const bookingData = {
-    userId: user.value.uid,
-
-    bookingFor: bookingFor.value,
-    services: selectedServices.value,
-    staffAssignments: finalStaffAssignments,
-
-    startAt,
-    endAt,
-
-    totalDuration: totalDuration.value,
-    totalPrice: totalPrice.value,
-
-    status: 'pending',
-    createdAt: serverTimestamp()
-  }
-
   try {
-    // await addBooking(bookingData)
     await createBooking({
-      serviceId,
-      serviceName,
-      date,
-      time
+      serviceIds,
+      preferredStaffMap: staffAssignments.value,
+      startAt: booking.value.startAt,
+      endAt: booking.value.endAt,
+      bookingFor: bookingFor.value
     })
 
     router.push('/profile')
   } catch (err) {
     console.error(err)
-    alert('Booking failed. Please try again.')
+    if (err?.code === 'functions/already-exists' || err?.message?.includes('no longer available')) {
+      alert(
+        'Sorry, this time slot was just booked by someone else. Please choose another available time.'
+      )
+
+      // Reset only the schedule step
+      booking.value.startAt = null
+      booking.value.endAt = null
+      step.value = 4
+
+      return
+    }
+
+    alert(err?.message || 'Booking failed')
   }
 }
 </script>
