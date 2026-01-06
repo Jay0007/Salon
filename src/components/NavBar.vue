@@ -39,6 +39,12 @@
             <li>
               <router-link to="/admin/managestaff" class="dropdown-link">Manage Staff</router-link>
             </li>
+            <li>
+              <router-link to="/admin/calendar" class="dropdown-link"> Staff Calendar </router-link>
+            </li>
+            <li>
+              <router-link to="/admin/analytics" class="dropdown-link"> Analytics </router-link>
+            </li>
           </ul>
         </li>
 
@@ -110,6 +116,14 @@
                     >Manage Staff</router-link
                   >
                 </li>
+                <li v-if="isAdmin">
+                  <router-link to="/admin/analytics" class="dropdown-link">Analytics</router-link>
+                </li>
+                <li v-if="isAdmin">
+                  <router-link to="/admin/calendar" class="dropdown-link"
+                    >Staff Calendar</router-link
+                  >
+                </li>
               </ul>
             </li>
             <li>
@@ -153,8 +167,8 @@ onMounted(() => {
     }
 
     isLoggedIn.value = true
-
     const token = await user.getIdTokenResult()
+    console.log(token)
     isAdmin.value = token.claims.admin === true
   })
 })

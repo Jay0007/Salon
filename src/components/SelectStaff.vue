@@ -6,21 +6,24 @@
       <p class="font-medium mb-2">{{ service.name }}</p>
 
       <!-- No staff available -->
-      <p v-if="staffByService(service.id).length === 0" class="text-sm text-red-500">
-        No staff available for this service
+      <p
+        v-if="staffByService(service.id).length === 0"
+        class="text-sm text-blue-800 bg-blue-100 p-3 rounded-lg"
+      >
+        Loading staff...
       </p>
 
       <!-- Staff selector -->
       <select
         v-else
-        :value="modelValue[service.id] ?? ''"
+        :value="modelValue[service.id] ?? ANY"
         @change="onSelect(service.id, $event.target.value)"
         class="w-full border rounded px-3 py-2"
       >
         <option disabled value="">Select staff</option>
 
         <!-- Any staff option (only if >1 staff) -->
-        <option v-if="staffByService(service.id).length > 1" value="null">
+        <option v-if="staffByService(service.id).length > 1" :value="ANY">
           Any available staff
         </option>
 
@@ -33,9 +36,11 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watchEffect } from 'vue'
-import { getDocs, collection } from 'firebase/firestore'
-import { db } from '@/services/firebase'
+import { ref, onBeforeMount, watchEffect } from 'vue'
+import { httpsCallable } from 'firebase/functions'
+import { functions } from '@/services/firebase'
+
+const ANY = 'ANY'
 
 const props = defineProps({
   services: {
@@ -53,12 +58,10 @@ const emit = defineEmits(['update:modelValue'])
 const staffList = ref([])
 
 /* Load staff once */
-onMounted(async () => {
-  const snap = await getDocs(collection(db, 'staff'))
-  staffList.value = snap.docs.map((d) => ({
-    id: d.id,
-    ...d.data()
-  }))
+onBeforeMount(async () => {
+  const fn = httpsCallable(functions, 'getStaffForBooking')
+  const res = await fn()
+  staffList.value = Array.isArray(res.data) ? res.data : []
 })
 
 /* Staff who can do a specific service */
@@ -83,7 +86,7 @@ watchEffect(() => {
 
     // If multiple staff and nothing chosen yet → default to ANY (null)
     if (staffOptions.length > 1 && !(service.id in next)) {
-      next[service.id] = null
+      next[service.id] = ANY
     }
   })
 
@@ -96,7 +99,7 @@ watchEffect(() => {
 function onSelect(serviceId, staffId) {
   emit('update:modelValue', {
     ...props.modelValue,
-    [serviceId]: staffId
+    [serviceId]: staffId === ANY ? null : staffId
   })
 }
 </script>

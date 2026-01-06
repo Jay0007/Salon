@@ -1,49 +1,57 @@
 <template>
-  <div class="space-y-6">
-    <!-- Date -->
+  <div class="space-y-5">
+    <!-- DATE PICKER -->
     <div>
       <label class="block text-sm font-medium text-gray-700 mb-1"> Select Date </label>
+
       <input
         type="date"
-        v-model="selectedDate"
         :min="today"
-        class="w-full border rounded-lg px-3 py-2"
+        :value="selectedDate || ''"
+        @change="onDateChange"
+        class="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
       />
     </div>
 
-    <!-- Loading -->
-    <p v-if="loading" class="text-sm text-gray-500">Checking availability…</p>
+    <!-- LOADING -->
+    <p v-if="loading" class="text-sm text-gray-500">Finding earliest available times…</p>
 
-    <!-- Slots -->
-    <div v-if="!loading && slots.length">
+    <!-- TIMELINES -->
+    <div v-if="!loading && timelines.length">
       <label class="block text-sm font-medium text-gray-700 mb-3"> Select Time </label>
 
-      <div class="grid grid-cols-4 sm:grid-cols-6 gap-3">
+      <div class="grid grid-cols-3 sm:grid-cols-4 gap-2">
         <button
-          v-for="slot in slots"
-          :key="slot.startAt"
-          @click="select(slot)"
-          class="py-2 rounded-lg text-sm border transition"
+          v-for="timeline in visibleTimelines"
+          :key="timeline.startAt + timeline.endAt"
+          @click="selectTimeline(timeline)"
+          class="rounded-md border px-3 py-1.5 text-sm transition text-center"
           :class="
-            modelValue?.startAt === slot.startAt
-              ? 'bg-indigo-600 text-white border-indigo-600'
-              : 'bg-white hover:border-indigo-500'
+            selectedStart === timeline.startAt
+              ? 'bg-indigo-600 text-white border-indigo-600 ring-2 ring-indigo-300'
+              : 'bg-white hover:border-indigo-400'
           "
         >
-          {{ formatTime(slot.startAt) }}
+          {{ formatTime(timeline.startAt) }}
         </button>
       </div>
     </div>
 
-    <p v-if="!loading && selectedDate && !slots.length" class="text-sm text-gray-500">
-      No slots available for this date.
+    <!-- NO AVAILABILITY -->
+    <p v-if="!loading && selectedDate && !timelines.length" class="text-sm text-gray-500">
+      No available times for this date.
     </p>
   </div>
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
-import { findAvailableSlots } from '@/services/firebase'
+import { ref, watch, computed } from 'vue'
+import { httpsCallable } from 'firebase/functions'
+import { functions } from '@/services/firebase'
+
+/* --------------------------------------------------
+   PROPS / EMITS
+-------------------------------------------------- */
 
 const props = defineProps({
   serviceIds: { type: Array, required: true },
@@ -52,76 +60,141 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:modelValue'])
-let currentRequestId = 0
-let lastFetchKey = ''
+
+/* --------------------------------------------------
+   STATE
+-------------------------------------------------- */
+
 const selectedDate = ref(null)
-const slots = ref([])
+const timelines = ref([])
 const loading = ref(false)
 
-const today = new Date().toISOString().split('T')[0]
+const today = new Date().toISOString().slice(0, 10)
+let lastRequestKey = ''
 
-/* ---------------- Helpers ---------------- */
+const selectedStart = computed(() => props.modelValue?.startAt || null)
 
-function formatTime(iso) {
-  return new Date(iso).toLocaleTimeString('en-IN', {
+/* --------------------------------------------------
+   HELPERS
+-------------------------------------------------- */
+
+function formatTime(value) {
+  const d = new Date(value)
+  if (isNaN(d)) return '--:--'
+  return d.toLocaleTimeString('en-IN', {
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    timeZone: 'Asia/Kolkata'
   })
 }
 
-/* ---------------- Slot Fetch ---------------- */
+/**
+ * LOCAL NOON → avoids timezone date shift
+ */
+function buildDateForBackend(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return new Date(y, m - 1, d, 12, 0, 0).toISOString()
+}
 
-async function loadSlots() {
+/**
+ * 🔥 CRITICAL FIX
+ * Normalize dates coming from Cloud Functions
+ */
+function normalizeTimeline(t) {
+  return {
+    ...t,
+    startAt: new Date(t.startAt).toISOString(),
+    endAt: new Date(t.endAt).toISOString(),
+    segments: t.segments.map((s) => ({
+      ...s,
+      startAt: new Date(s.startAt).toISOString(),
+      endAt: new Date(s.endAt).toISOString()
+    }))
+  }
+}
+
+/* --------------------------------------------------
+   COMPUTED
+-------------------------------------------------- */
+
+const visibleTimelines = computed(() => {
+  const seen = new Set()
+  return timelines.value.filter((t) => {
+    if (seen.has(t.startAt)) return false
+    seen.add(t.startAt)
+    return true
+  })
+})
+
+/* --------------------------------------------------
+   LOAD TIMELINES
+-------------------------------------------------- */
+
+async function loadTimelines() {
   if (!selectedDate.value || !props.serviceIds.length) return
-  const fetchKey = JSON.stringify({
+
+  const requestKey = JSON.stringify({
     date: selectedDate.value,
     services: props.serviceIds,
     staff: props.preferredStaffMap
   })
 
-  // 🔒 Prevent unnecessary reloads
-  if (fetchKey === lastFetchKey) return
-  lastFetchKey = fetchKey
-  const requestId = ++currentRequestId
+  if (requestKey === lastRequestKey) return
+  lastRequestKey = requestKey
+
   loading.value = true
-  slots.value = []
+  timelines.value = []
 
   try {
-    const [year, month, day] = selectedDate.value.split('-').map(Number)
-    const localDate = new Date(year, month - 1, day, 0, 0, 0)
+    const fn = httpsCallable(functions, 'findAvailableTimelines')
 
-    const result = await findAvailableSlots({
+    const res = await fn({
+      date: buildDateForBackend(selectedDate.value),
       serviceIds: props.serviceIds,
-      preferredStaffMap: props.preferredStaffMap,
-      startAt: localDate.toISOString()
+      preferredStaffMap: props.preferredStaffMap
     })
 
-    // 🔒 Ignore outdated responses
-    if (requestId !== currentRequestId) return
-
-    slots.value = result || []
-  } catch (e) {
-    console.error('Failed to load slots', e)
+    const raw = Array.isArray(res.data) ? res.data : []
+    timelines.value = raw.map(normalizeTimeline)
+  } catch (err) {
+    console.error('findAvailableTimelines failed:', err)
+    timelines.value = []
   } finally {
-    if (requestId === currentRequestId) {
-      loading.value = false
-    }
+    loading.value = false
   }
 }
-/* ---------------- Slot Selection ---------------- */
-function select(slot) {
-  emit('update:modelValue', {
-    startAt: slot.startAt,
-    endAt: slot.endAt
-  })
+
+/* --------------------------------------------------
+   EVENTS
+-------------------------------------------------- */
+
+function onDateChange(e) {
+  selectedDate.value = e.target.value
+  timelines.value = []
+  emit('update:modelValue', null)
+  loadTimelines()
 }
 
+function selectTimeline(timeline) {
+  if (!timeline?.segments?.length) return
+  emit('update:modelValue', timeline)
+}
+
+/* --------------------------------------------------
+   RESET WHEN CONTEXT CHANGES
+-------------------------------------------------- */
+
 watch(
-  () => ({
-    date: selectedDate.value,
-    services: props.serviceIds.join(','),
-    staff: JSON.stringify(props.preferredStaffMap)
-  }),
-  loadSlots
+  () =>
+    JSON.stringify({
+      services: props.serviceIds,
+      staff: props.preferredStaffMap
+    }),
+  () => {
+    selectedDate.value = null
+    timelines.value = []
+    lastRequestKey = ''
+    emit('update:modelValue', null)
+  }
 )
 </script>

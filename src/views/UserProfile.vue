@@ -1,148 +1,211 @@
 <template>
-  <div class="max-w-6xl mx-auto px-4 py-10">
+  <div class="max-w-4xl mx-auto px-4 py-12">
     <!-- Header -->
-    <div class="mb-10">
-      <h2 class="text-3xl font-semibold text-gray-800">My Appointments</h2>
-      <p class="text-gray-500 mt-1">Manage your upcoming, cancelled, and past bookings</p>
+    <div class="mb-8">
+      <h1 class="text-3xl font-semibold text-gray-900">My Appointments</h1>
+      <p class="text-gray-500 mt-1">View and manage your bookings</p>
     </div>
 
     <!-- Error -->
-    <p v-if="error" class="mb-6 text-sm text-red-600">
+    <p v-if="error" class="mb-4 text-sm text-red-600">
       {{ error }}
     </p>
 
-    <!-- UPCOMING -->
-    <section v-if="upcoming.length">
-      <h3 class="text-lg font-semibold text-gray-700 mb-4">Upcoming</h3>
+    <!-- Tabs -->
+    <div class="flex gap-6 border-b mb-6">
+      <button
+        v-for="tab in tabs"
+        :key="tab.key"
+        @click="activeTab = tab.key"
+        class="pb-3 text-sm font-medium border-b-2 transition"
+        :class="
+          activeTab === tab.key
+            ? 'border-indigo-600 text-indigo-600'
+            : 'border-transparent text-gray-500 hover:text-gray-700'
+        "
+      >
+        {{ tab.label }}
+        <span class="ml-1 text-xs text-gray-400"> ({{ tab.count }}) </span>
+      </button>
+    </div>
 
-      <BookingCard
-        v-for="b in upcoming"
+    <!-- List -->
+    <div v-if="currentList.length" class="space-y-3">
+      <AppointmentCard
+        v-for="b in currentList"
         :key="b.id"
         :booking="b"
-        :loading-id="actionId"
+        :services-map="servicesMap"
+        :staff-map="staffMap"
+        :past="activeTab === 'past'"
+        :cancelled="activeTab === 'cancelled'"
         @cancel="handleCancel"
         @reschedule="handleReschedule"
       />
-    </section>
+    </div>
+    <!-- Loading -->
+    <div v-if="loading" class="text-left py-10 text-gray-500">Loading appointments…</div>
 
-    <!-- CANCELLED -->
-    <section v-if="cancelled.length" class="mt-12">
-      <h3 class="text-lg font-semibold text-gray-700 mb-4">Cancelled</h3>
+    <!-- Empty -->
+    <div v-else-if="!loading" class="py-20 text-center text-sm text-gray-400">
+      No {{ activeTab }} appointments.
+    </div>
 
-      <BookingCard v-for="b in cancelled" :key="b.id" :booking="b" cancelled />
-    </section>
-
-    <!-- PAST -->
-    <section v-if="past.length" class="mt-12">
-      <h3 class="text-lg font-semibold text-gray-700 mb-4">Past</h3>
-
-      <BookingCard v-for="b in past" :key="b.id" :booking="b" past />
-    </section>
+    <!-- Reschedule Modal -->
     <RescheduleModal
       v-if="showReschedule"
       :booking="selectedBooking"
-      @close="showReschedule = false"
+      @close="closeReschedule"
       @confirm="confirmReschedule"
     />
-
-    <!-- Empty -->
-    <p
-      v-if="!upcoming.length && !cancelled.length && !past.length"
-      class="text-center text-gray-400 py-20"
-    >
-      No appointments found
-    </p>
   </div>
 </template>
+
 <script setup>
-import { ref, onMounted } from 'vue'
-import { auth, getDocs, query, where, collection, db, cancelBooking } from '@/services/firebase'
-import BookingCard from '@/components/BookingCard.vue'
+import { ref, onMounted, computed } from 'vue'
+import { auth, onAuthStateChanged, cancelBooking, rescheduleBooking } from '@/services/firebase'
+
+import AppointmentCard from '@/components/AppointmentCard.vue'
 import RescheduleModal from '@/components/RescheduleModal.vue'
-import { rescheduleBooking } from '@/services/firebase'
+import { httpsCallable } from 'firebase/functions'
+import { functions } from '@/services/firebase'
+
+/* ---------------- STATE ---------------- */
 
 const upcoming = ref([])
-const cancelled = ref([])
 const past = ref([])
+const cancelled = ref([])
 
-const actionId = ref(null)
+const loading = ref(true)
 const error = ref(null)
+const actionId = ref(null)
+
 const showReschedule = ref(false)
 const selectedBooking = ref(null)
 
-onMounted(loadBookings)
+const servicesMap = ref({})
+const staffMap = ref({})
 
-/**
- * Normalize Firestore timestamps safely
- */
-function toDate(value) {
-  if (!value) return null
-  if (value instanceof Date) return value
-  if (value.toDate) return value.toDate()
-  return new Date(value)
+/* UI */
+const activeTab = ref('upcoming')
+
+/* ---------------- HELPERS ---------------- */
+
+function toDate(v) {
+  if (!v) return null
+  if (v._custom?.value) return new Date(v._custom.value)
+  if (typeof v.toDate === 'function') return v.toDate()
+  if (v instanceof Date) return v
+  if (typeof v === 'string') return new Date(v)
+  return null
 }
 
+/* ---------------- LOAD BOOKINGS ---------------- */
+async function loadLookups() {
+  const fn = httpsCallable(functions, 'getBookingLookups')
+  const res = await fn()
+  servicesMap.value = res.data.services || {}
+  staffMap.value = res.data.staff || {}
+}
 async function loadBookings() {
-  const user = auth.currentUser
-  if (!user) return
-
-  const now = new Date()
-  const q = query(collection(db, 'bookings'), where('userId', '==', user.uid))
-  const snap = await getDocs(q)
+  loading.value = true
+  error.value = null
 
   upcoming.value = []
-  cancelled.value = []
   past.value = []
+  cancelled.value = []
 
-  snap.forEach((d) => {
-    const raw = d.data()
-    const booking = {
-      id: d.id,
-      ...raw,
-      startAt: toDate(raw.startAt),
-      endAt: toDate(raw.endAt)
-    }
-
-    if (booking.status === 'cancelled') {
-      cancelled.value.push(booking)
-    } else if (booking.endAt && booking.endAt >= now) {
-      upcoming.value.push(booking)
-    } else {
-      past.value.push(booking)
-    }
-  })
-}
-function handleReschedule(booking) {
-  selectedBooking.value = booking
-  showReschedule.value = true
-}
-async function confirmReschedule(payload) {
   try {
-    await rescheduleBooking(payload)
-    showReschedule.value = false
-    selectedBooking.value = null
-    await loadBookings()
-  } catch (err) {
-    alert(err.message || 'Failed to reschedule')
+    const fn = httpsCallable(functions, 'getMyBookings')
+    const res = await fn()
+
+    const now = Date.now()
+
+    for (const raw of res.data || []) {
+      const startAt = new Date(raw.startAt)
+      const endAt = new Date(raw.endAt)
+
+      const booking = {
+        ...raw,
+        startAt,
+        endAt
+      }
+
+      if (raw.status === 'cancelled') {
+        cancelled.value.push(booking)
+      } else if (endAt.getTime() > now) {
+        upcoming.value.push(booking)
+      } else {
+        past.value.push(booking)
+      }
+    }
+
+    upcoming.value.sort((a, b) => a.startAt - b.startAt)
+    past.value.sort((a, b) => b.startAt - a.startAt)
+  } catch (e) {
+    console.error(e)
+    error.value = 'Failed to load appointments'
+  } finally {
+    loading.value = false
   }
 }
 
-/**
- * Cancel booking
- */
+/* ---------------- AUTH ---------------- */
+
+onMounted(() => {
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) return
+    await loadLookups()
+    await loadBookings(user)
+  })
+})
+/* ---------------- ACTIONS ---------------- */
+
 async function handleCancel(id) {
   if (!confirm('Cancel this appointment?')) return
-
-  error.value = null
   actionId.value = id
 
   try {
     await cancelBooking(id)
-    await loadBookings()
+    await loadBookings(auth.currentUser)
   } catch (e) {
     error.value = e.message || 'Failed to cancel booking'
   } finally {
     actionId.value = null
   }
 }
+
+function handleReschedule(booking) {
+  selectedBooking.value = booking
+  showReschedule.value = true
+}
+
+function closeReschedule() {
+  showReschedule.value = false
+  selectedBooking.value = null
+}
+
+async function confirmReschedule(payload) {
+  try {
+    await rescheduleBooking(payload)
+    closeReschedule()
+    await loadBookings(auth.currentUser)
+  } catch (e) {
+    alert(e.message || 'Failed to reschedule booking')
+  }
+}
+
+/* ---------------- TABS ---------------- */
+
+const tabs = computed(() => [
+  { key: 'upcoming', label: 'Upcoming', count: upcoming.value.length },
+  { key: 'past', label: 'Past', count: past.value.length },
+  { key: 'cancelled', label: 'Cancelled', count: cancelled.value.length }
+])
+
+const currentList = computed(() => {
+  if (activeTab.value === 'upcoming') return upcoming.value
+  if (activeTab.value === 'past') return past.value
+  return cancelled.value
+})
 </script>

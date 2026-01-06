@@ -11,7 +11,8 @@ import ClientDashboard from '@/views/ClientDashboard.vue'
 import UserProfile from '@/views/UserProfile.vue'
 import ManageServices from '@/pages/admin/manageServices.vue'
 import ManageStaff from '@/pages/admin/manageStaff.vue'
-
+import AdminAnalytics from '@/pages/admin/AdminAnalytics.vue'
+import AdminCalendar from '@/pages/admin/AdminCalendar.vue'
 /* --------------------------------------------------
    Routes
 -------------------------------------------------- */
@@ -43,6 +44,16 @@ const routes = [
   {
     path: '/admin/managestaff',
     component: ManageStaff,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/admin/analytics',
+    component: AdminAnalytics,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/admin/calendar',
+    component: AdminCalendar,
     meta: { requiresAuth: true, requiresAdmin: true }
   }
 ]

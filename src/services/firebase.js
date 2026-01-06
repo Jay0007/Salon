@@ -67,14 +67,12 @@ setPersistence(auth, browserLocalPersistence).catch((err) => {
   console.error('Auth persistence error:', err)
 })
 
-// --- Booking Helpers ---
-async function refreshTokenIfNeeded() {
-  if (!auth.currentUser) throw new Error('Not authenticated')
-  await auth.currentUser.getIdToken(true)
-}
+/* ======================================================
+   BOOKING (TIMELINE-BASED)
+====================================================== */
 
-// --- Booking via Cloud Function ---
-async function createBooking({ serviceIds, preferredStaffMap, startAt, endAt, bookingFor }) {
+// ✅ CREATE BOOKING (NEW BACKEND)
+async function createBooking({ timeline, bookingFor }) {
   if (!auth.currentUser) {
     throw new Error('User not authenticated')
   }
@@ -82,27 +80,55 @@ async function createBooking({ serviceIds, preferredStaffMap, startAt, endAt, bo
   const fn = httpsCallable(functions, 'createBooking')
 
   const result = await fn({
-    serviceIds, // ✅ array of service IDs
-    preferredStaffMap, // ✅ { serviceId: staffId | "ANY" }
-    startAt, // ✅ ISO string
-    endAt, // ✅ ISO string
-    bookingFor // ✅ optional metadata
+    timeline,
+    bookingFor
   })
 
   return result.data
 }
 
-// Cancel a booking
-async function cancelBooking(bookingId) {
-  const bookingRef = doc(db, 'bookings', bookingId)
-  return updateDoc(bookingRef, { status: 'cancelled' })
+// ✅ RESCHEDULE BOOKING (TIMELINE-BASED)
+async function rescheduleBooking({ bookingId, newTimeline }) {
+  if (!auth.currentUser) {
+    throw new Error('User not authenticated')
+  }
+
+  const fn = httpsCallable(functions, 'rescheduleBooking')
+
+  const result = await fn({
+    bookingId,
+    newTimeline
+  })
+
+  return result.data
 }
 
-// Reschedule a booking
-async function rescheduleBooking({ bookingId, newStartAt, newEndAt }) {
-  const fn = httpsCallable(functions, 'rescheduleBooking')
-  return (await fn({ bookingId, newStartAt, newEndAt })).data
+// ✅ CANCEL BOOKING (UNCHANGED)
+async function cancelBooking(bookingId) {
+  const fn = httpsCallable(functions, 'cancelBooking')
+  return (await fn({ bookingId })).data
 }
+
+// ✅ FIND AVAILABLE TIMELINES
+async function findAvailableTimelines({ date, serviceIds, preferredStaffMap }) {
+  if (!auth.currentUser) {
+    throw new Error('User not authenticated')
+  }
+
+  const fn = httpsCallable(functions, 'findAvailableTimelines')
+
+  const result = await fn({
+    date,
+    serviceIds,
+    preferredStaffMap
+  })
+
+  return result.data
+}
+
+/* ======================================================
+   ADMIN / OTHER HELPERS (UNCHANGED)
+====================================================== */
 
 async function createStaff(data) {
   const fn = httpsCallable(functions, 'createStaff')
@@ -113,6 +139,7 @@ async function updateStaff(data) {
   const fn = httpsCallable(functions, 'updateStaff')
   return (await fn(data)).data
 }
+
 async function createService(data) {
   const fn = httpsCallable(functions, 'createService')
   return (await fn(data)).data
@@ -128,12 +155,8 @@ async function toggleServiceStatus(data) {
     throw new Error('User not authenticated')
   }
 
-  // Debug: Check if we actually have a user right before the call
-  console.log('Calling toggleServiceStatus as:', auth.currentUser.uid)
-
   const fn = httpsCallable(functions, 'toggleServiceStatus')
-  const result = await fn(data)
-  return result.data
+  return (await fn(data)).data
 }
 
 async function toggleStaffStatus(data) {
@@ -148,29 +171,18 @@ async function getGlobalSettings() {
   }
   return snap.data()
 }
-async function findAvailableSlots({ serviceIds, preferredStaffMap, startAt }) {
-  if (!auth.currentUser) {
-    throw new Error('User not authenticated')
-  }
 
-  const fn = httpsCallable(functions, 'findAvailableSlots')
+/* ======================================================
+   EXPORTS
+====================================================== */
 
-  const result = await fn({
-    serviceIds,
-    preferredStaffMap,
-    startAt
-  })
-
-  return result.data
-}
-
-// --- Exports ---
 export {
   app,
   functions,
   auth,
   db,
   getAuth,
+
   // Firestore core
   doc,
   setDoc,
@@ -205,17 +217,18 @@ export {
   signInWithPopup,
   updateProfile,
 
-  // Booking helpers
-  // addBooking,
+  // Booking helpers (TIMELINE)
   createBooking,
-  cancelBooking,
   rescheduleBooking,
+  cancelBooking,
+  findAvailableTimelines,
+
+  // Admin helpers
   createStaff,
   updateStaff,
   toggleStaffStatus,
   createService,
   updateService,
   toggleServiceStatus,
-  getGlobalSettings,
-  findAvailableSlots
+  getGlobalSettings
 }

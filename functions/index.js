@@ -1,150 +1,110 @@
+// functions/index.js
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { admin, db } = require('./firebaseAdmin')
+
 const {
-  findAvailableSlots,
-  validateAndAssignStaff, // ✅ ADD THIS
-  createSlotLock,
-  rotateStaffPriority
+  findAvailableTimelines,
+  validateTimeline,
+  blockStaffCalendarPerSegment,
+  unblockStaffCalendarPerSegment,
+  calculateStaffUtilization,
+  getSalonSettings
 } = require('./bookingEngine')
+
+/* ======================================================
+   AUTH HELPERS
+====================================================== */
 
 function assertAuth(request) {
   if (!request.auth) {
-    throw new HttpsError('unauthenticated', 'Login required')
+    throw new HttpsError('unauthenticated', 'Authentication required')
   }
 }
 
 function assertAdmin(request) {
-  console.log('--- ASSERT ADMIN CHECK ---')
-
-  if (!request.auth) {
-    console.error('FAIL: No auth context')
-    throw new HttpsError('unauthenticated', 'User is not authenticated')
-  }
-
-  console.log('UID:', request.auth.uid)
-  console.log('Token claims:', JSON.stringify(request.auth.token, null, 2))
-
+  assertAuth(request)
   if (request.auth.token.admin !== true) {
     throw new HttpsError('permission-denied', 'Admin only')
   }
-
-  console.log('PASS: Admin verified')
 }
 
-/* ---------------- AVAILABILITY ---------------- */
+/* ======================================================
+   PUBLIC – FIND AVAILABLE TIMELINES
+====================================================== */
 
-exports.getAvailableDates = onCall({ invoker: 'public' }, async (request) => {
+exports.findAvailableTimelines = onCall({ invoker: 'public' }, async (request) => {
   assertAuth(request)
 
-  const { serviceIds } = request.data
-  if (!serviceIds?.length) return []
+  const { date, serviceIds, preferredStaffMap = {} } = request.data || {}
 
-  const dates = []
-  const today = new Date()
-
-  for (let i = 0; i < 60; i++) {
-    const d = new Date(today)
-    d.setDate(d.getDate() + i)
-
-    const result = await findAvailableSlots(serviceIds, {}, d)
-    if (result) dates.push(d.toISOString().split('T')[0])
+  if (!date || !Array.isArray(serviceIds) || serviceIds.length === 0) {
+    throw new HttpsError('invalid-argument', 'Invalid payload')
   }
 
-  return dates
+  return await findAvailableTimelines({
+    date: new Date(new Date(date).toISOString()),
+    serviceIds,
+    preferredStaffMap,
+    userId: request.auth.uid
+  })
 })
 
-exports.getAvailableSlots = onCall({ invoker: 'public' }, async (request) => {
-  assertAuth(request)
-
-  const { serviceIds, date, preferredStaffMap } = request.data
-
-  return await findAvailableSlots(serviceIds, preferredStaffMap || {}, new Date(date))
-})
-
-/* ---------------- BOOKINGS ---------------- */
-
-/* ---------------- FIND SLOTS ---------------- */
-
-exports.findAvailableSlots = onCall({ invoker: 'public' }, async (request) => {
-  try {
-    assertAuth(request)
-
-    const { serviceIds, preferredStaffMap, startAt } = request.data || {}
-
-    if (!Array.isArray(serviceIds) || !startAt) {
-      throw new HttpsError('invalid-argument', 'Invalid request')
-    }
-
-    const date = new Date(startAt)
-
-    return await findAvailableSlots(serviceIds, preferredStaffMap || {}, date)
-  } catch (err) {
-    console.error('FIND AVAILABLE SLOTS FAILED', err)
-
-    if (err instanceof HttpsError) throw err
-
-    throw new HttpsError('internal', err.message || 'Failed to load slots')
-  }
-})
-
-/* ---------------- CREATE BOOKING ---------------- */
+/* ======================================================
+   PUBLIC – CREATE BOOKING (TIMELINE)
+====================================================== */
 
 exports.createBooking = onCall({ invoker: 'public' }, async (request) => {
   assertAuth(request)
 
-  const { serviceIds, preferredStaffMap, startAt, endAt, bookingFor } = request.data || {}
+  const { timeline, bookingFor } = request.data || {}
 
-  if (!Array.isArray(serviceIds) || !startAt || !endAt) {
-    throw new HttpsError('invalid-argument', 'Invalid booking data')
+  if (
+    !timeline ||
+    !timeline.startAt ||
+    !timeline.endAt ||
+    !Array.isArray(timeline.segments) ||
+    timeline.segments.length === 0
+  ) {
+    throw new HttpsError('invalid-argument', 'Invalid timeline')
   }
 
-  const startDate = new Date(startAt)
-  const endDate = new Date(endAt)
-
-  const result = await validateAndAssignStaff({
-    serviceIds,
-    preferredStaffMap,
-    startAt: startDate,
-    endAt: endDate
-  })
-
-  if (!result.available) {
-    throw new HttpsError('already-exists', result.reason)
+  // 🔐 Validate timeline one last time (race-condition safe)
+  const validation = await validateTimeline(timeline, request.auth.uid)
+  if (!validation.valid) {
+    throw new HttpsError('already-exists', validation.reason)
   }
 
-  await createSlotLock({
-    userId: request.auth.uid,
-    startAt: admin.firestore.Timestamp.fromDate(startDate),
-    endAt: admin.firestore.Timestamp.fromDate(endDate),
-    staffAssignments: result.staffAssignments
+  const bookingRef = db.collection('bookings').doc()
+
+  await db.runTransaction(async (tx) => {
+    tx.set(bookingRef, {
+      userId: request.auth.uid,
+      bookingFor: bookingFor || null,
+      segments: timeline.segments,
+      startAt: admin.firestore.Timestamp.fromDate(new Date(timeline.startAt)),
+      endAt: admin.firestore.Timestamp.fromDate(new Date(timeline.endAt)),
+      status: 'confirmed',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    })
   })
 
-  const ref = db.collection('bookings').doc()
+  // 🚫 Block staff calendars (once per segment)
+  await blockStaffCalendarPerSegment(timeline.segments)
 
-  await ref.set({
-    userId: request.auth.uid,
-    bookingFor: bookingFor || null,
-    serviceIds,
-    staffAssignments: result.staffAssignments,
-    startAt: admin.firestore.Timestamp.fromDate(startDate),
-    endAt: admin.firestore.Timestamp.fromDate(endDate),
-    totalDuration: result.totalDuration,
-    totalPrice: result.totalPrice,
-    status: 'confirmed',
-    createdAt: admin.firestore.FieldValue.serverTimestamp()
-  })
-
-  await rotateStaffPriority(result.staffAssignments)
-
-  return { success: true, bookingId: ref.id }
+  return { success: true, bookingId: bookingRef.id }
 })
 
-/* ---------------- RESCHEDULE BOOKING ---------------- */
+/* ======================================================
+   PUBLIC – CANCEL BOOKING
+====================================================== */
 
-exports.rescheduleBooking = onCall({ invoker: 'public' }, async (request) => {
+exports.cancelBooking = onCall({ invoker: 'public' }, async (request) => {
   assertAuth(request)
 
-  const { bookingId, newStartAt, newEndAt } = request.data || {}
+  const { bookingId } = request.data || {}
+  if (!bookingId) {
+    throw new HttpsError('invalid-argument', 'Booking ID required')
+  }
 
   const ref = db.collection('bookings').doc(bookingId)
   const snap = await ref.get()
@@ -156,109 +116,193 @@ exports.rescheduleBooking = onCall({ invoker: 'public' }, async (request) => {
   const booking = snap.data()
 
   if (booking.userId !== request.auth.uid) {
-    throw new HttpsError('permission-denied')
+    throw new HttpsError('permission-denied', 'Not your booking')
   }
 
-  const startDate = new Date(newStartAt)
-  const endDate = new Date(newEndAt)
-
-  const result = await validateAndAssignStaff({
-    serviceIds: booking.serviceIds,
-    preferredStaffMap: booking.staffAssignments,
-    startAt: startDate,
-    endAt: endDate
-  })
-
-  if (!result.available) {
-    throw new HttpsError('already-exists', result.reason)
+  if (booking.status === 'cancelled') {
+    return { success: true }
   }
+
+  // 🔓 Unblock staff calendars
+  await unblockStaffCalendarPerSegment(booking.segments || [])
 
   await ref.update({
-    startAt: admin.firestore.Timestamp.fromDate(startDate),
-    endAt: admin.firestore.Timestamp.fromDate(endDate),
-    staffAssignments: result.staffAssignments
+    status: 'cancelled',
+    cancelledAt: admin.firestore.FieldValue.serverTimestamp()
   })
-
-  await rotateStaffPriority(result.staffAssignments)
 
   return { success: true }
 })
 
-exports.cancelBooking = onCall({ invoker: 'public' }, async (request) => {
+/* ======================================================
+   PUBLIC – RESCHEDULE BOOKING (TIMELINE)
+====================================================== */
+
+exports.rescheduleBooking = onCall({ invoker: 'public' }, async (request) => {
   assertAuth(request)
 
-  await db.collection('bookings').doc(request.data.bookingId).update({
-    status: 'cancelled'
-  })
+  const { bookingId, newTimeline } = request.data || {}
 
-  return { success: true }
-})
-/* ---------------- STAFF (ADMIN) ---------------- */
-
-exports.createStaff = onCall({ invoker: 'public' }, async (request) => {
-  assertAdmin(request)
-
-  const { name, services, isActive } = request.data
-  if (!name || !Array.isArray(services) || !services.length) {
-    throw new HttpsError('invalid-argument', 'Invalid staff data')
+  if (
+    !bookingId ||
+    !newTimeline ||
+    !Array.isArray(newTimeline.segments) ||
+    newTimeline.segments.length === 0
+  ) {
+    throw new HttpsError('invalid-argument', 'Invalid reschedule payload')
   }
 
-  const ref = db.collection('staff').doc()
-  await ref.set({
-    name,
-    services,
-    userId: null,
-    isAdmin: false,
-    isActive: isActive !== false,
-    createdAt: admin.firestore.FieldValue.serverTimestamp()
-  })
+  const ref = db.collection('bookings').doc(bookingId)
+  const snap = await ref.get()
 
-  return { success: true, staffId: ref.id }
-})
-
-exports.updateStaff = onCall({ invoker: 'public' }, async (request) => {
-  assertAdmin(request)
-
-  const { staffId, ...rest } = request.data
-  if (!staffId) {
-    throw new HttpsError('invalid-argument', 'Staff ID required')
+  if (!snap.exists) {
+    throw new HttpsError('not-found', 'Booking not found')
   }
 
-  await db
-    .collection('staff')
-    .doc(staffId)
-    .update({
-      ...rest,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    })
-  return { success: true }
-})
+  const booking = snap.data()
 
-exports.toggleStaffStatus = onCall({ invoker: 'public' }, async (request) => {
-  assertAdmin(request)
+  if (booking.userId !== request.auth.uid) {
+    throw new HttpsError('permission-denied', 'Not your booking')
+  }
+  await unblockStaffCalendarPerSegment(booking.segments || [])
 
-  const { staffId, isActive } = request.data
-  if (!staffId) {
-    throw new HttpsError('invalid-argument', 'Staff ID required')
+  // 🔐 Validate new timeline
+  const validation = await validateTimeline(newTimeline, request.auth.uid)
+  if (!validation.valid) {
+    throw new HttpsError('already-exists', validation.reason)
   }
 
-  await db.collection('staff').doc(staffId).update({
-    isActive,
+  // 🔓 Unblock old segments
+  await unblockStaffCalendarPerSegment(booking.segments || [])
+
+  // 🚫 Block new segments
+  await blockStaffCalendarPerSegment(newTimeline.segments)
+
+  await ref.update({
+    segments: newTimeline.segments,
+    startAt: admin.firestore.Timestamp.fromDate(new Date(newTimeline.startAt)),
+    endAt: admin.firestore.Timestamp.fromDate(new Date(newTimeline.endAt)),
     updatedAt: admin.firestore.FieldValue.serverTimestamp()
   })
 
   return { success: true }
 })
+
+/* ======================================================
+   ADMIN – STAFF UTILIZATION
+====================================================== */
+
+exports.getStaffUtilization = onCall({ invoker: 'public' }, async (request) => {
+  assertAdmin(request)
+
+  const { staffId, date } = request.data || {}
+  if (!staffId || !date) {
+    throw new HttpsError('invalid-argument', 'staffId and date required')
+  }
+
+  const salon = await getSalonSettings()
+
+  const openAt = new Date(date)
+  openAt.setHours(salon.openHour, 0, 0, 0)
+
+  const closeAt = new Date(date)
+  closeAt.setHours(salon.closeHour, 0, 0, 0)
+
+  const key = `${staffId}_${date.slice(0, 10)}`
+  const snap = await db.collection('staffCalendars').doc(key).get()
+
+  const blocked = snap.exists
+    ? snap.data().blocked.map((b) => ({
+        startAt: new Date(b.startAt),
+        endAt: new Date(b.endAt)
+      }))
+    : []
+
+  const freeIntervals = []
+  let cursor = openAt
+
+  for (const b of blocked.sort((a, b) => a.startAt - b.startAt)) {
+    if (cursor < b.startAt) freeIntervals.push({ startAt: cursor, endAt: b.startAt })
+    cursor = new Date(Math.max(cursor, b.endAt))
+  }
+  if (cursor < closeAt) freeIntervals.push({ startAt: cursor, endAt: closeAt })
+
+  return calculateStaffUtilization(freeIntervals, openAt, closeAt)
+})
+
+// public
+
+exports.getStaffForBooking = onCall({ invoker: 'public' }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Auth required')
+  }
+
+  const snap = await db.collection('staff').where('isActive', '==', true).get()
+
+  return snap.docs.map((d) => ({
+    id: d.id,
+    name: d.data().name,
+    services: d.data().services || []
+  }))
+})
+
+exports.getBookingLookups = onCall({ invoker: 'public' }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Auth required')
+  }
+
+  const [servicesSnap, staffSnap] = await Promise.all([
+    db.collection('services').get(),
+    db.collection('staff').get()
+  ])
+
+  const services = {}
+  servicesSnap.forEach((d) => {
+    services[d.id] = {
+      name: d.data().name,
+      duration: d.data().duration,
+      price: d.data().price
+    }
+  })
+
+  const staff = {}
+  staffSnap.forEach((d) => {
+    staff[d.id] = {
+      name: d.data().name
+    }
+  })
+
+  return { services, staff }
+})
+
+exports.getMyBookings = onCall({ invoker: 'public' }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Auth required')
+  }
+
+  const snap = await db.collection('bookings').where('userId', '==', request.auth.uid).get()
+
+  return snap.docs.map((d) => ({
+    id: d.id,
+    ...d.data(),
+    startAt: d.data().startAt.toDate().toISOString(),
+    endAt: d.data().endAt.toDate().toISOString()
+  }))
+})
+
+/* ======================================================
+   ADMIN – SERVICES
+====================================================== */
+
 exports.createService = onCall({ invoker: 'public' }, async (request) => {
   assertAdmin(request)
 
-  const { name, category, price, duration } = request.data
+  const { name, category, price, duration } = request.data || {}
   if (!name || !category || !price || !duration) {
     throw new HttpsError('invalid-argument', 'Invalid service data')
   }
 
-  const ref = db.collection('services').doc()
-  await ref.set({
+  const ref = await db.collection('services').add({
     name,
     category,
     price,
@@ -267,13 +311,13 @@ exports.createService = onCall({ invoker: 'public' }, async (request) => {
     createdAt: admin.firestore.FieldValue.serverTimestamp()
   })
 
-  return { success: true, serviceId: ref.id }
+  return { id: ref.id }
 })
 
 exports.updateService = onCall({ invoker: 'public' }, async (request) => {
   assertAdmin(request)
 
-  const { serviceId, ...rest } = request.data
+  const { serviceId, ...updates } = request.data || {}
   if (!serviceId) {
     throw new HttpsError('invalid-argument', 'Service ID required')
   }
@@ -282,7 +326,7 @@ exports.updateService = onCall({ invoker: 'public' }, async (request) => {
     .collection('services')
     .doc(serviceId)
     .update({
-      ...rest,
+      ...updates,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     })
 
@@ -292,9 +336,9 @@ exports.updateService = onCall({ invoker: 'public' }, async (request) => {
 exports.toggleServiceStatus = onCall({ invoker: 'public' }, async (request) => {
   assertAdmin(request)
 
-  const { serviceId, isActive } = request.data
-  if (!serviceId) {
-    throw new HttpsError('invalid-argument', 'Service ID required')
+  const { serviceId, isActive } = request.data || {}
+  if (!serviceId || typeof isActive !== 'boolean') {
+    throw new HttpsError('invalid-argument', 'Invalid payload')
   }
 
   await db.collection('services').doc(serviceId).update({
@@ -305,63 +349,59 @@ exports.toggleServiceStatus = onCall({ invoker: 'public' }, async (request) => {
   return { success: true }
 })
 
-exports.linkStaffAccount = onCall({ invoker: 'public' }, async (request) => {
-  assertAuth(request)
+/* ======================================================
+   ADMIN – STAFF
+====================================================== */
 
-  const user = await admin.auth().getUser(request.auth.uid)
-  const email = user.email
-  if (!email) return { linked: false }
-
-  const snap = await db.collection('staff').where('email', '==', email).limit(1).get()
-
-  if (snap.empty) return { linked: false }
-
-  const staffDoc = snap.docs[0]
-
-  await staffDoc.ref.update({
-    userId: request.auth.uid,
-    isActive: true,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
-  })
-
-  const existingClaims = user.customClaims || {}
-
-  await admin.auth().setCustomUserClaims(request.auth.uid, {
-    ...existingClaims,
-    staff: true,
-    admin: existingClaims.admin === true || staffDoc.data().isAdmin === true
-  })
-
-  return { linked: true }
-})
-
-exports.setStaffAdmin = onCall({ invoker: 'public' }, async (request) => {
+exports.createStaff = onCall({ invoker: 'public' }, async (request) => {
   assertAdmin(request)
 
-  const { staffId, isAdmin } = request.data
-  const ref = db.collection('staff').doc(staffId)
-  const snap = await ref.get()
-
-  if (!snap.exists) {
-    throw new HttpsError('not-found', 'Staff not found')
+  const { name, services = [] } = request.data || {}
+  if (!name || !Array.isArray(services)) {
+    throw new HttpsError('invalid-argument', 'Invalid staff data')
   }
 
-  const staff = snap.data()
-
-  await ref.update({
-    isAdmin,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  const ref = await db.collection('staff').add({
+    name,
+    services,
+    isActive: true,
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
   })
 
-  if (staff.userId) {
-    const existing = (await admin.auth().getUser(staff.userId)).customClaims || {}
+  return { id: ref.id }
+})
 
-    await admin.auth().setCustomUserClaims(staff.userId, {
-      ...existing,
-      staff: true,
-      admin: isAdmin
-    })
+exports.updateStaff = onCall({ invoker: 'public' }, async (request) => {
+  assertAdmin(request)
+
+  const { staffId, ...updates } = request.data || {}
+  if (!staffId) {
+    throw new HttpsError('invalid-argument', 'Staff ID required')
   }
+
+  await db
+    .collection('staff')
+    .doc(staffId)
+    .update({
+      ...updates,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    })
+
+  return { success: true }
+})
+
+exports.toggleStaffStatus = onCall({ invoker: 'public' }, async (request) => {
+  assertAdmin(request)
+
+  const { staffId, isActive } = request.data || {}
+  if (!staffId || typeof isActive !== 'boolean') {
+    throw new HttpsError('invalid-argument', 'Invalid payload')
+  }
+
+  await db.collection('staff').doc(staffId).update({
+    isActive,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  })
 
   return { success: true }
 })
