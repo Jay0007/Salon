@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /* =========================
+       SERVICES (PUBLIC READ)
+       ========================= */
+    match /services/{serviceId} {
+
+      // Anyone can read services (booking page)
+      allow read: if true;
+
+      // No client-side writes at all
+      allow create, update, delete: if false;
+    }
+
+    /* =========================
+       STAFF
+       ========================= */
+    match /staff/{staffId} {
+
+      // Admin can read all staff
+      allow read: if request.auth != null
+                  && request.auth.token.admin == true;
+
+      // Customers can read only active staff
+      allow read: if resource.data.active == true;
+
+      // No direct client-side writes at all
+      allow create, update, delete: if false;
+    }
+
+
+    /* =========================
+       BOOKINGS
+       ========================= */
+    match /bookings/{bookingId} {
+      allow read: if request.auth != null
+                  && request.auth.uid == resource.data.userId;
+
+      allow create, update, delete: if false;
+    }
+
+    /* =========================
+       USERS
+       ========================= */
+    match /users/{userId} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == userId;
+    }
+  }
+}
