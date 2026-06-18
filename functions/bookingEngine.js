@@ -6,7 +6,7 @@ const { db, admin } = require('./firebaseAdmin')
 ====================================================== */
 
 const SLOT_STEP_MINUTES = 15
-const DEBUG = true
+const DEBUG = false
 
 function dbg(...args) {
   if (DEBUG) console.log('[BOOKING-ENGINE]', ...args)
@@ -28,14 +28,42 @@ function overlaps(aStart, aEnd, bStart, bEnd) {
 }
 function roundUpToSlot(date, stepMinutes) {
   const d = new Date(date)
-  const minutes = d.getUTCHours() * 60 + d.getUTCMinutes()
+  const minutes = d.getHours() * 60 + d.getMinutes()
   const rounded = Math.ceil(minutes / stepMinutes) * stepMinutes
 
   const h = Math.floor(rounded / 60)
   const m = rounded % 60
 
-  d.setUTCHours(h, m, 0, 0)
+  d.setHours(h, m, 0, 0)
   return d
+}
+
+function normalizeToDate(value) {
+  if (!value) return null
+
+  if (value instanceof Date) {
+    return isNaN(value) ? null : value
+  }
+
+  // Firestore Timestamp
+  if (typeof value.toDate === 'function') {
+    const d = value.toDate()
+    return isNaN(d) ? null : d
+  }
+
+  // Callable-serialized Timestamp
+  if (value._seconds != null) {
+    const d = new Date(value._seconds * 1000 + Math.floor((value._nanoseconds || 0) / 1e6))
+    return isNaN(d) ? null : d
+  }
+
+  // ISO string
+  if (typeof value === 'string') {
+    const d = new Date(value)
+    return isNaN(d) ? null : d
+  }
+
+  return null
 }
 
 /* ======================================================
@@ -48,16 +76,15 @@ async function getSalonSettings() {
     return {
       openHour: 10,
       closeHour: 20,
-      timezoneOffsetMinutes: 330
+      timezoneOffsetMinutes: 0
     }
   }
   return snap.data()
 }
 
-function setTimeInSalonTimezone(baseDate, hour, minute, offsetMinutes) {
+function setTimeInSalonTimezone(baseDate, hour, minute) {
   const d = new Date(baseDate)
-  const utcMinutes = hour * 60 + minute - offsetMinutes
-  d.setUTCHours(0, utcMinutes, 0, 0)
+  d.setHours(hour, minute, 0, 0)
   return d
 }
 
@@ -105,16 +132,20 @@ async function loadCustomerBookings(userId) {
    STAFF CALENDARS
 ====================================================== */
 
-async function getStaffBlockedIntervals(staffId, dateISO) {
-  const dateKey = dateISO.slice(0, 10)
+async function getStaffBlockedIntervals(staffId, dateInput) {
+  const d = normalizeToDate(dateInput)
+  if (!d) return []
+
+  const dateKey = d.toISOString().slice(0, 10)
+
   const docId = `${staffId}_${dateKey}`
   const snap = await db.collection('staffCalendars').doc(docId).get()
 
   if (!snap.exists) return []
 
   return snap.data().blocked.map((b) => ({
-    startAt: new Date(b.startAt),
-    endAt: new Date(b.endAt)
+    startAt: normalizeToDate(b.startAt),
+    endAt: normalizeToDate(b.endAt)
   }))
 }
 
@@ -144,13 +175,13 @@ function computeFreeIntervals(openAt, closeAt, blocked) {
 
 function serializeTimeline(timeline) {
   return {
-    startAt: timeline.startAt.toISOString(),
-    endAt: timeline.endAt.toISOString(),
+    startAt: admin.firestore.Timestamp.fromDate(timeline.startAt),
+    endAt: admin.firestore.Timestamp.fromDate(timeline.endAt),
     segments: timeline.segments.map((s) => ({
       serviceId: s.serviceId,
       staffId: s.staffId,
-      startAt: s.startAt.toISOString(),
-      endAt: s.endAt.toISOString()
+      startAt: admin.firestore.Timestamp.fromDate(s.startAt),
+      endAt: admin.firestore.Timestamp.fromDate(s.endAt)
     }))
   }
 }
@@ -168,17 +199,24 @@ function cloneAvailability(avail) {
   }
   return out
 }
+
 function timelineSignature(segments) {
-  return segments.map((s) => `${s.serviceId}:${s.staffId}:${s.startAt.toISOString()}`).join('|')
+  return segments
+    .map((s) => {
+      const d = normalizeToDate(s.startAt)
+      return `${s.serviceId}:${s.staffId}:${d?.toISOString()}`
+    })
+    .join('|')
 }
+
 async function findAvailableTimelines({ date, serviceIds, preferredStaffMap = {}, userId }) {
   const salon = await getSalonSettings()
   const services = await loadServices(serviceIds)
   const staff = await loadStaff()
   const customerBookings = await loadCustomerBookings(userId)
 
-  const openAt = setTimeInSalonTimezone(date, salon.openHour, 0, salon.timezoneOffsetMinutes)
-  const closeAt = setTimeInSalonTimezone(date, salon.closeHour, 0, salon.timezoneOffsetMinutes)
+  const openAt = setTimeInSalonTimezone(date, salon.openHour, 0)
+  const closeAt = setTimeInSalonTimezone(date, salon.closeHour, 0)
   const now = new Date()
   const salonNow = new Date(now.getTime() + salon.timezoneOffsetMinutes * 60000)
 
@@ -316,8 +354,8 @@ async function validateTimeline(timeline, userId) {
   const customerBookings = await loadCustomerBookings(userId)
 
   for (const seg of timeline.segments) {
-    const start = new Date(seg.startAt)
-    const end = new Date(seg.endAt)
+    const start = normalizeToDate(seg.startAt)
+    const end = normalizeToDate(seg.endAt)
 
     if (customerBookings.some((b) => overlaps(b.startAt, b.endAt, start, end))) {
       return { valid: false, reason: 'Customer not available' }
@@ -338,7 +376,8 @@ async function validateTimeline(timeline, userId) {
 
 async function blockStaffCalendarPerSegment(segments) {
   for (const seg of segments) {
-    const dateKey = seg.startAt.slice(0, 10)
+    const d = normalizeToDate(seg.startAt)
+    const dateKey = d.toISOString().slice(0, 10)
     const ref = db.collection('staffCalendars').doc(`${seg.staffId}_${dateKey}`)
 
     await db.runTransaction(async (tx) => {
@@ -363,7 +402,8 @@ async function blockStaffCalendarPerSegment(segments) {
 
 async function unblockStaffCalendarPerSegment(segments) {
   for (const seg of segments) {
-    const dateKey = seg.startAt.slice(0, 10)
+    const d = normalizeToDate(seg.startAt)
+    const dateKey = d.toISOString().slice(0, 10)
     const ref = db.collection('staffCalendars').doc(`${seg.staffId}_${dateKey}`)
 
     await db.runTransaction(async (tx) => {
@@ -399,5 +439,6 @@ module.exports = {
   blockStaffCalendarPerSegment,
   unblockStaffCalendarPerSegment,
   calculateStaffUtilization,
-  getSalonSettings
+  getSalonSettings,
+  normalizeToDate
 }

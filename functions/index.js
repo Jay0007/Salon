@@ -8,7 +8,8 @@ const {
   blockStaffCalendarPerSegment,
   unblockStaffCalendarPerSegment,
   calculateStaffUtilization,
-  getSalonSettings
+  getSalonSettings,
+  normalizeToDate
 } = require('./bookingEngine')
 
 /* ======================================================
@@ -81,8 +82,8 @@ exports.createBooking = onCall({ invoker: 'public' }, async (request) => {
       userId: request.auth.uid,
       bookingFor: bookingFor || null,
       segments: timeline.segments,
-      startAt: admin.firestore.Timestamp.fromDate(new Date(timeline.startAt)),
-      endAt: admin.firestore.Timestamp.fromDate(new Date(timeline.endAt)),
+      startAt: timeline.startAt,
+      endAt: timeline.endAt,
       status: 'confirmed',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     })
@@ -281,13 +282,18 @@ exports.getMyBookings = onCall({ invoker: 'public' }, async (request) => {
   }
 
   const snap = await db.collection('bookings').where('userId', '==', request.auth.uid).get()
+  return snap.docs.map((d) => {
+    const data = d.data()
+    const start = normalizeToDate(data.startAt)
+    const end = normalizeToDate(data.endAt)
 
-  return snap.docs.map((d) => ({
-    id: d.id,
-    ...d.data(),
-    startAt: d.data().startAt.toDate().toISOString(),
-    endAt: d.data().endAt.toDate().toISOString()
-  }))
+    return {
+      id: d.id,
+      ...data,
+      startAt: start ? start.toISOString() : null,
+      endAt: end ? end.toISOString() : null
+    }
+  })
 })
 
 /* ======================================================
@@ -404,4 +410,37 @@ exports.toggleStaffStatus = onCall({ invoker: 'public' }, async (request) => {
   })
 
   return { success: true }
+})
+
+// ADMIN - SALON analytics
+
+exports.getStaffAdmin = onCall({ invoker: 'public' }, async (request) => {
+  if (!request.auth || request.auth.token.admin !== true) {
+    throw new HttpsError('permission-denied', 'Admin only')
+  }
+
+  const snap = await db.collection('staff').where('isActive', '==', true).get()
+
+  return snap.docs.map((d) => ({
+    id: d.id,
+    name: d.data().name,
+    services: d.data().services || []
+  }))
+})
+
+exports.getStaffCalendarAdmin = onCall({ invoker: 'public' }, async (request) => {
+  // must be admin
+  if (!request.auth || request.auth.token.admin !== true) {
+    throw new HttpsError('permission-denied', 'Admin only')
+  }
+
+  const { staffId, date } = request.data || {}
+  if (!staffId || !date) {
+    throw new HttpsError('invalid-argument', 'staffId and date required')
+  }
+
+  const docId = `${staffId}_${date}`
+  const snap = await db.collection('staffCalendars').doc(docId).get()
+
+  return snap.exists ? snap.data().blocked || [] : []
 })

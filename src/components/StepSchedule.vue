@@ -27,7 +27,7 @@
           @click="selectTimeline(timeline)"
           class="rounded-md border px-3 py-1.5 text-sm transition text-center"
           :class="
-            selectedStart === timeline.startAt
+            selectedStart === toDate(timeline.startAt)?.getTime()
               ? 'bg-indigo-600 text-white border-indigo-600 ring-2 ring-indigo-300'
               : 'bg-white hover:border-indigo-400'
           "
@@ -72,20 +72,42 @@ const loading = ref(false)
 const today = new Date().toISOString().slice(0, 10)
 let lastRequestKey = ''
 
-const selectedStart = computed(() => props.modelValue?.startAt || null)
+const selectedStart = computed(() => toDate(props.modelValue?.startAt)?.getTime() || null)
 
 /* --------------------------------------------------
    HELPERS
 -------------------------------------------------- */
 
 function formatTime(value) {
-  const d = new Date(value)
-  if (isNaN(d)) return '--:--'
+  const d = toDate(value)
+  if (!d) return '--:--'
+
   return d.toLocaleTimeString('en-IN', {
     hour: '2-digit',
     minute: '2-digit',
     timeZone: 'Asia/Kolkata'
   })
+}
+function toDate(value) {
+  if (!value) return null
+
+  // Firestore Timestamp (rare in client, but safe)
+  if (typeof value.toDate === 'function') {
+    return value.toDate()
+  }
+
+  // Callable-serialized Timestamp
+  if (value._seconds != null) {
+    return new Date(value._seconds * 1000 + Math.floor(value._nanoseconds / 1e6))
+  }
+
+  // ISO fallback (legacy safety)
+  if (typeof value === 'string') {
+    const d = new Date(value)
+    return isNaN(d) ? null : d
+  }
+
+  return null
 }
 
 /**
@@ -94,23 +116,6 @@ function formatTime(value) {
 function buildDateForBackend(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number)
   return new Date(y, m - 1, d, 12, 0, 0).toISOString()
-}
-
-/**
- * 🔥 CRITICAL FIX
- * Normalize dates coming from Cloud Functions
- */
-function normalizeTimeline(t) {
-  return {
-    ...t,
-    startAt: new Date(t.startAt).toISOString(),
-    endAt: new Date(t.endAt).toISOString(),
-    segments: t.segments.map((s) => ({
-      ...s,
-      startAt: new Date(s.startAt).toISOString(),
-      endAt: new Date(s.endAt).toISOString()
-    }))
-  }
 }
 
 /* --------------------------------------------------
@@ -155,7 +160,7 @@ async function loadTimelines() {
     })
 
     const raw = Array.isArray(res.data) ? res.data : []
-    timelines.value = raw.map(normalizeTimeline)
+    timelines.value = raw
   } catch (err) {
     console.error('findAvailableTimelines failed:', err)
     timelines.value = []

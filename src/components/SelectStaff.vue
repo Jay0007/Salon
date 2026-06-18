@@ -99,7 +99,7 @@ watchEffect(() => {
 function onSelect(serviceId, staffId) {
   emit('update:modelValue', {
     ...props.modelValue,
-    [serviceId]: staffId === ANY ? null : staffId
+    [serviceId]: staffId === ANY ? ANY : staffId
   })
 }
 </script>
