@@ -12,13 +12,17 @@
     </div>
 
     <!-- TIME -->
-    <p class="text-sm text-gray-700 mb-2">
+    <p class="text-sm text-blue-600 mb-2">
       {{ timeRange }}
     </p>
 
     <!-- SERVICES -->
     <ul class="text-sm text-gray-600 space-y-1 mb-3">
-      <li v-for="seg in orderedSegments" :key="seg.startAt" class="flex justify-between">
+      <li
+        v-for="seg in orderedSegments"
+        :key="`${seg.serviceId}-${seg.staffId}-${toDate(seg.startAt)?.getTime()}`"
+        class="flex justify-between"
+      >
         <span>
           {{ seg.service?.name || 'Service' }}
           <span class="text-xs text-gray-400"> · {{ seg.staff?.name || 'Staff' }} </span>
@@ -46,6 +50,7 @@ const props = defineProps({
   past: Boolean,
   cancelled: Boolean
 })
+const DEBUG = false
 
 /* --------------------------------------------------
    HELPERS
@@ -53,8 +58,26 @@ const props = defineProps({
 
 function toDate(v) {
   if (!v) return null
-  if (v.toDate) return v.toDate()
-  return new Date(v)
+
+  if (v instanceof Date) return v
+
+  if (typeof v.toDate === 'function') {
+    return v.toDate()
+  }
+
+  if (v._seconds != null) {
+    return new Date(v._seconds * 1000)
+  }
+
+  if (v._custom?.value) {
+    return new Date(v._custom.value)
+  }
+
+  if (typeof v === 'string') {
+    return new Date(v)
+  }
+
+  return null
 }
 
 /* --------------------------------------------------
@@ -73,6 +96,10 @@ const dateLabel = computed(() =>
 )
 
 const timeRange = computed(() => {
+  if (DEBUG) {
+    console.log('start', start.value)
+    console.log('end', end.value)
+  }
   if (!start.value || !end.value) return ''
   return `${start.value.toLocaleTimeString('en-IN', {
     hour: '2-digit',
@@ -83,16 +110,26 @@ const timeRange = computed(() => {
   })}`
 })
 
-const orderedSegments = computed(() =>
-  [...(props.booking.segments || [])]
+const orderedSegments = computed(() => {
+  if (DEBUG) {
+    console.log('BOOKING', props.booking)
+  }
+
+  return [...(props.booking.segments || [])]
     .sort((a, b) => toDate(a.startAt) - toDate(b.startAt))
-    .map((s) => ({
-      ...s,
-      service: props.servicesMap[s.serviceId],
-      staff: props.staffMap[s.staffId],
-      duration: (toDate(s.endAt) - toDate(s.startAt)) / 60000
-    }))
-)
+    .map((s) => {
+      if (DEBUG) {
+        console.log('SEGMENT', s)
+      }
+
+      return {
+        ...s,
+        service: props.servicesMap[s.serviceId],
+        staff: props.staffMap[s.staffId],
+        duration: (toDate(s.endAt) - toDate(s.startAt)) / 60000
+      }
+    })
+})
 
 const totalDuration = computed(() => orderedSegments.value.reduce((sum, s) => sum + s.duration, 0))
 

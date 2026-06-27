@@ -43,7 +43,7 @@ exports.findAvailableTimelines = onCall({ invoker: 'public' }, async (request) =
   }
 
   return await findAvailableTimelines({
-    date: new Date(new Date(date).toISOString()),
+    date,
     serviceIds,
     preferredStaffMap,
     userId: request.auth.uid
@@ -442,5 +442,25 @@ exports.getStaffCalendarAdmin = onCall({ invoker: 'public' }, async (request) =>
   const docId = `${staffId}_${date}`
   const snap = await db.collection('staffCalendars').doc(docId).get()
 
-  return snap.exists ? snap.data().blocked || [] : []
+  const blocked = snap.exists ? snap.data().blocked || [] : []
+
+  return blocked.map((b) => ({
+    startAt: normalizeToDate(b.startAt)?.toISOString(),
+    endAt: normalizeToDate(b.endAt)?.toISOString()
+  }))
+})
+
+//Admin - Salon settings
+
+exports.makeAdmin = onCall({ invoker: 'public' }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Login required')
+  }
+
+  await admin.auth().setCustomUserClaims(request.auth.uid, {
+    admin: true,
+    staff: true
+  })
+
+  return { success: true }
 })

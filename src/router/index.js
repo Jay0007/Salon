@@ -69,7 +69,9 @@ const router = createRouter({
 
 let authResolved = false
 let currentUser = null
-
+onAuthStateChanged(auth, (user) => {
+  currentUser = user
+})
 const getCurrentUser = () =>
   new Promise((resolve) => {
     if (authResolved) {
@@ -89,10 +91,11 @@ const getCurrentUser = () =>
 -------------------------------------------------- */
 
 router.beforeEach(async (to, from, next) => {
-  const user = await getCurrentUser()
+  const user = auth.currentUser || currentUser || (await getCurrentUser())
 
   // 🔒 Requires login
   if (to.meta.requiresAuth && !user) {
+    console.log('Access denied. Please log in first.')
     return next('/login')
   }
 

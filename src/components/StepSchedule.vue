@@ -82,10 +82,9 @@ function formatTime(value) {
   const d = toDate(value)
   if (!d) return '--:--'
 
-  return d.toLocaleTimeString('en-IN', {
+  return d.toLocaleTimeString([], {
     hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'Asia/Kolkata'
+    minute: '2-digit'
   })
 }
 function toDate(value) {
@@ -113,10 +112,10 @@ function toDate(value) {
 /**
  * LOCAL NOON → avoids timezone date shift
  */
-function buildDateForBackend(dateStr) {
-  const [y, m, d] = dateStr.split('-').map(Number)
-  return new Date(y, m - 1, d, 12, 0, 0).toISOString()
-}
+// function buildDateForBackend(dateStr) {
+//   const [y, m, d] = dateStr.split('-').map(Number)
+//   return new Date(y, m - 1, d, 12, 0, 0).toISOString()
+// }
 
 /* --------------------------------------------------
    COMPUTED
@@ -154,7 +153,7 @@ async function loadTimelines() {
     const fn = httpsCallable(functions, 'findAvailableTimelines')
 
     const res = await fn({
-      date: buildDateForBackend(selectedDate.value),
+      date: selectedDate.value,
       serviceIds: props.serviceIds,
       preferredStaffMap: props.preferredStaffMap
     })
@@ -162,7 +161,7 @@ async function loadTimelines() {
     const raw = Array.isArray(res.data) ? res.data : []
     timelines.value = raw
   } catch (err) {
-    console.error('findAvailableTimelines failed:', err)
+    // console.error('findAvailableTimelines failed:', err)
     timelines.value = []
   } finally {
     loading.value = false

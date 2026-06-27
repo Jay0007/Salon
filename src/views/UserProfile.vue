@@ -48,7 +48,7 @@
 
     <!-- Empty -->
     <div v-else-if="!loading" class="py-20 text-center text-sm text-gray-400">
-      No {{ activeTab }} appointments.
+      No More {{ activeTab }} appointments.
     </div>
 
     <!-- Reschedule Modal -->
@@ -59,6 +59,7 @@
       @confirm="confirmReschedule"
     />
   </div>
+  <!-- <button @click="makeMeAdmin">Make Me Admin</button> -->
 </template>
 
 <script setup>
@@ -93,12 +94,38 @@ const activeTab = ref('upcoming')
 
 function toDate(v) {
   if (!v) return null
-  if (v._custom?.value) return new Date(v._custom.value)
-  if (typeof v.toDate === 'function') return v.toDate()
-  if (v instanceof Date) return v
-  if (typeof v === 'string') return new Date(v)
+
+  if (v instanceof Date) {
+    return v
+  }
+
+  if (typeof v.toDate === 'function') {
+    return v.toDate()
+  }
+
+  // Firestore callable timestamp
+  if (v._seconds != null) {
+    return new Date(v._seconds * 1000 + Math.floor((v._nanoseconds || 0) / 1e6))
+  }
+
+  if (v._custom?.value) {
+    return new Date(v._custom.value)
+  }
+
+  if (typeof v === 'string') {
+    return new Date(v)
+  }
+
   return null
 }
+
+// async function makeMeAdmin() {
+//   const fn = httpsCallable(functions, 'makeAdmin')
+
+//   const result = await fn()
+
+//   console.log(result.data)
+// }
 
 /* ---------------- LOAD BOOKINGS ---------------- */
 async function loadLookups() {
@@ -122,15 +149,21 @@ async function loadBookings() {
     const now = Date.now()
 
     for (const raw of res.data || []) {
-      const startAt = new Date(raw.startAt)
-      const endAt = new Date(raw.endAt)
+      const startAt = toDate(raw.startAt)
+      const endAt = toDate(raw.endAt)
 
       const booking = {
         ...raw,
         startAt,
-        endAt
-      }
+        endAt,
 
+        segments: (raw.segments || []).map((s) => ({
+          ...s,
+          startAt: toDate(s.startAt),
+          endAt: toDate(s.endAt)
+        }))
+      }
+      console.log('Normalized booking', booking)
       if (raw.status === 'cancelled') {
         cancelled.value.push(booking)
       } else if (endAt.getTime() > now) {

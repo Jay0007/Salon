@@ -72,6 +72,7 @@ function normalizeToDate(value) {
 
 async function getSalonSettings() {
   const snap = await db.collection('settings').doc('salon').get()
+
   if (!snap.exists) {
     return {
       openHour: 10,
@@ -79,13 +80,15 @@ async function getSalonSettings() {
       timezoneOffsetMinutes: 0
     }
   }
-  return snap.data()
-}
 
-function setTimeInSalonTimezone(baseDate, hour, minute) {
-  const d = new Date(baseDate)
-  d.setHours(hour, minute, 0, 0)
-  return d
+  const data = snap.data()
+
+  return {
+    ...data,
+    openHour: Number(data.openHour),
+    closeHour: Number(data.closeHour),
+    timezoneOffsetMinutes: Number(data.timezoneOffsetMinutes)
+  }
 }
 
 /* ======================================================
@@ -123,8 +126,8 @@ async function loadCustomerBookings(userId) {
     .get()
 
   return snap.docs.map((d) => ({
-    startAt: d.data().startAt.toDate(),
-    endAt: d.data().endAt.toDate()
+    startAt: normalizeToDate(d.data().startAt),
+    endAt: normalizeToDate(d.data().endAt)
   }))
 }
 
@@ -140,7 +143,12 @@ async function getStaffBlockedIntervals(staffId, dateInput) {
 
   const docId = `${staffId}_${dateKey}`
   const snap = await db.collection('staffCalendars').doc(docId).get()
-
+  if (DEBUG) {
+    console.log({
+      dateInput,
+      dateKey
+    })
+  }
   if (!snap.exists) return []
 
   return snap.data().blocked.map((b) => ({
@@ -210,22 +218,31 @@ function timelineSignature(segments) {
 }
 
 async function findAvailableTimelines({ date, serviceIds, preferredStaffMap = {}, userId }) {
+  if (DEBUG) {
+    console.log('date =', date)
+    console.log('typeof =', typeof date)
+    console.log('constructor =', date?.constructor?.name)
+    console.log('Incoming date:', date)
+  }
   const salon = await getSalonSettings()
   const services = await loadServices(serviceIds)
   const staff = await loadStaff()
   const customerBookings = await loadCustomerBookings(userId)
 
-  const openAt = setTimeInSalonTimezone(date, salon.openHour, 0)
-  const closeAt = setTimeInSalonTimezone(date, salon.closeHour, 0)
-  const now = new Date()
-  const salonNow = new Date(now.getTime() + salon.timezoneOffsetMinutes * 60000)
+  const [y, m, d] = date.split('-').map(Number)
 
-  const bookingDate = openAt.toISOString().slice(0, 10)
-  const today = salonNow.toISOString().slice(0, 10)
+  const openAt = new Date(y, m - 1, d, salon.openHour, 0, 0, 0)
+  const closeAt = new Date(y, m - 1, d, salon.closeHour, 0, 0, 0)
+  const salonNow = new Date()
+
+  const bookingDate = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+
+  const today = new Date()
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
 
   let earliestStart = openAt
 
-  if (bookingDate === today) {
+  if (bookingDate === todayKey) {
     earliestStart = roundUpToSlot(salonNow, SLOT_STEP_MINUTES)
 
     // never allow before salon open
@@ -236,7 +253,7 @@ async function findAvailableTimelines({ date, serviceIds, preferredStaffMap = {}
   const baseAvailability = {}
 
   for (const s of staff) {
-    const blocked = await getStaffBlockedIntervals(s.id, date.toISOString())
+    const blocked = await getStaffBlockedIntervals(s.id, date)
     baseAvailability[s.id] = computeFreeIntervals(openAt, closeAt, blocked)
   }
 

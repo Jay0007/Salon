@@ -168,7 +168,7 @@ onMounted(() => {
 
     isLoggedIn.value = true
     const token = await user.getIdTokenResult()
-    console.log(token)
+    // console.log(token)
     isAdmin.value = token.claims.admin === true
   })
 })

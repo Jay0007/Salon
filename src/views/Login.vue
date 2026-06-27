@@ -55,7 +55,8 @@ const login = async () => {
   error.value = ''
   try {
     await signInWithEmailAndPassword(auth, email.value, password.value)
-    router.push('/dashboard')
+
+    await router.push('/dashboard')
   } catch (err) {
     error.value = err.message
   }

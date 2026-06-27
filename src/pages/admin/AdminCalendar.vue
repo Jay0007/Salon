@@ -6,7 +6,12 @@
 
       <input type="date" v-model="selectedDate" class="border rounded-lg px-3 py-2 text-sm" />
     </div>
-
+    <button
+      @click="loadStaff"
+      class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition"
+    >
+      Refresh
+    </button>
     <!-- Loading -->
     <div v-if="loading" class="text-sm text-gray-400">Loading staff…</div>
 

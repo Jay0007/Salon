@@ -23,6 +23,7 @@ const props = defineProps({
   openHour: { type: Number, required: true },
   closeHour: { type: Number, required: true }
 })
+const DEBUG = false
 
 /* -----------------------------------
    SLOT GENERATION (30-MIN GRID)
@@ -39,6 +40,9 @@ const timeSlots = computed(() => {
       })
     }
   }
+  if (DEBUG) {
+    console.log('Generated slots:', slots)
+  }
   return slots
 })
 
@@ -48,19 +52,44 @@ const timeSlots = computed(() => {
 
 function isBlocked(startMin, endMin) {
   return props.blocked.some((b) => {
-    const s = toMinutesUTC(b.startAt)
-    const e = toMinutesUTC(b.endAt)
-    console.log(
-      `Checking slot ${startMin}-${endMin} against blocked ${s}-${e}:`,
-      startMin < e && endMin > s
-    )
+    const start = toDate(b.startAt)
+    const end = toDate(b.endAt)
+
+    if (DEBUG) {
+      console.log('Checking block:', { start, end })
+    }
+
+    const s = toMinutes(b.startAt)
+    const e = toMinutes(b.endAt)
+
     return startMin < e && endMin > s
   })
 }
+function toDate(v) {
+  if (!v) return null
 
-function toMinutesUTC(iso) {
-  const d = new Date(iso)
-  // console.log('Converted', iso, 'to minutes UTC:', d.getUTCHours() * 60 + d.getUTCMinutes())
-  return d.getUTCHours() * 60 + d.getUTCMinutes() + 330
+  if (v instanceof Date) return v
+
+  if (typeof v.toDate === 'function') {
+    return v.toDate()
+  }
+
+  if (v._seconds != null) {
+    return new Date(v._seconds * 1000 + Math.floor((v._nanoseconds || 0) / 1e6))
+  }
+
+  if (typeof v === 'string') {
+    return new Date(v)
+  }
+
+  return new Date(v)
+}
+
+function toMinutes(value) {
+  const d = toDate(value)
+
+  if (!d) return -1
+
+  return d.getUTCHours() * 60 + d.getUTCMinutes()
 }
 </script>

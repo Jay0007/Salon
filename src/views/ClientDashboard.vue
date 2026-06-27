@@ -248,8 +248,32 @@ onMounted(() => {
 /* --------------------------------------------------
    Helpers
 -------------------------------------------------- */
-function formatDateTime(iso) {
-  return new Date(iso).toLocaleString('en-IN', {
+function toDate(v) {
+  if (!v) return null
+
+  if (v instanceof Date) return v
+
+  if (typeof v.toDate === 'function') {
+    return v.toDate()
+  }
+
+  if (v._seconds != null) {
+    return new Date(v._seconds * 1000 + Math.floor((v._nanoseconds || 0) / 1e6))
+  }
+
+  if (typeof v === 'string') {
+    return new Date(v)
+  }
+
+  return new Date(v)
+}
+
+function formatDateTime(value) {
+  const d = toDate(value)
+
+  if (!d || isNaN(d)) return 'Invalid Date'
+
+  return d.toLocaleString([], {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
