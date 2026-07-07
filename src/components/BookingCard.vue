@@ -1,5 +1,6 @@
 <template>
-  <div class="bg-white border rounded-xl p-6 mb-5 shadow-sm">
+  <!-- Mostly unused component, but kept for future use -->
+  <div class="bg-black border rounded-xl p-6 mb-5 shadow-sm">
     <!-- Header -->
     <div class="flex justify-between mb-3">
       <div class="text-sm text-gray-600">
@@ -12,7 +13,7 @@
         {{ badgeText }}
       </span>
     </div>
-
+    <div class="text-sm text-gray-600 mb-3">Booking ID "Helooooooooooooooo"</div>
     <!-- Services -->
     <div v-for="s in normalizedServices" :key="s.id" class="flex justify-between py-2">
       <div>
@@ -87,9 +88,11 @@ function formatDate(d) {
 
 function formatTime(d) {
   if (!d) return ''
-  return d.toLocaleTimeString('en-IN', {
+  return d.toLocaleTimeString('en-CA', {
+    timeZone: 'UTC',
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    hour12: true
   })
 }
 

@@ -1,46 +1,70 @@
 <template>
   <div class="max-w-4xl mx-auto px-4 py-12">
-    <!-- Header -->
-    <div class="mb-8">
-      <h1 class="text-3xl font-semibold text-gray-900">My Appointments</h1>
-      <p class="text-gray-500 mt-1">View and manage your bookings</p>
-    </div>
-
     <!-- Error -->
     <p v-if="error" class="mb-4 text-sm text-red-600">
       {{ error }}
     </p>
 
-    <!-- Tabs -->
-    <div class="flex gap-6 border-b mb-6">
-      <button
-        v-for="tab in tabs"
-        :key="tab.key"
-        @click="activeTab = tab.key"
-        class="pb-3 text-sm font-medium border-b-2 transition"
-        :class="
-          activeTab === tab.key
-            ? 'border-indigo-600 text-indigo-600'
-            : 'border-transparent text-gray-500 hover:text-gray-700'
-        "
-      >
-        {{ tab.label }}
-        <span class="ml-1 text-xs text-gray-400"> ({{ tab.count }}) </span>
-      </button>
+    <ProfileHero
+      v-if="currentUser"
+      :user="currentUser"
+      phone=""
+      :member-since="formatMemberSince(currentUser.metadata.creationTime)"
+    />
+    <div class="mt-6">
+      <ProfileStats
+        :upcoming="upcoming.length"
+        :completed="past.length"
+        :cancelled="cancelled.length"
+        :total-spent="totalSpent"
+      />
     </div>
-
-    <!-- List -->
-    <div v-if="currentList.length" class="space-y-3">
-      <AppointmentCard
-        v-for="b in currentList"
-        :key="b.id"
-        :booking="b"
+    <div class="mt-8">
+      <NextAppointment
+        :booking="upcoming[0]"
         :services-map="servicesMap"
         :staff-map="staffMap"
-        :past="activeTab === 'past'"
-        :cancelled="activeTab === 'cancelled'"
         @cancel="handleCancel"
         @reschedule="handleReschedule"
+      />
+    </div>
+    <!-- Tabs -->
+    <AppointmentTabs v-model="activeTab" :tabs="tabs">
+      <template v-if="loading">
+        <div class="py-12 text-center text-gray-500">Loading appointments...</div>
+      </template>
+
+      <template v-else-if="currentList.length">
+        <AppointmentCard
+          v-for="b in currentList"
+          :key="b.id"
+          :booking="b"
+          :services-map="servicesMap"
+          :staff-map="staffMap"
+          :past="activeTab === 'past'"
+          :cancelled="activeTab === 'cancelled'"
+          @cancel="handleCancel"
+          @reschedule="handleReschedule"
+        />
+      </template>
+
+      <template v-else>
+        <div class="py-16 text-center">
+          <div class="text-5xl mb-4">📅</div>
+
+          <h3 class="text-lg font-semibold text-gray-800">No {{ activeTab }} appointments</h3>
+
+          <p class="mt-2 text-sm text-gray-500">Book your next appointment to get started.</p>
+        </div>
+      </template>
+    </AppointmentTabs>
+
+    <div class="mt-8">
+      <PersonalInfo
+        v-if="currentUser"
+        :user="currentUser"
+        phone=""
+        :member-since="formatMemberSince(currentUser.metadata.creationTime)"
       />
     </div>
     <!-- Loading -->
@@ -65,6 +89,11 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { auth, onAuthStateChanged, cancelBooking, rescheduleBooking } from '@/services/firebase'
+import ProfileHero from '@/components/profile/ProfileHero.vue'
+import ProfileStats from '@/components/profile/ProfileStats.vue'
+import NextAppointment from '@/components/profile/NextAppointment.vue'
+import AppointmentTabs from '@/components/profile/AppointmentTabs.vue'
+import PersonalInfo from '@/components/profile/PersonalInfo.vue'
 
 import AppointmentCard from '@/components/AppointmentCard.vue'
 import RescheduleModal from '@/components/RescheduleModal.vue'
@@ -72,6 +101,7 @@ import { httpsCallable } from 'firebase/functions'
 import { functions } from '@/services/firebase'
 
 /* ---------------- STATE ---------------- */
+const currentUser = ref(null)
 
 const upcoming = ref([])
 const past = ref([])
@@ -188,11 +218,23 @@ async function loadBookings() {
 onMounted(() => {
   onAuthStateChanged(auth, async (user) => {
     if (!user) return
+
+    currentUser.value = user
+
     await loadLookups()
-    await loadBookings(user)
+    await loadBookings()
   })
 })
 /* ---------------- ACTIONS ---------------- */
+
+function formatMemberSince(date) {
+  if (!date) return ''
+
+  return new Date(date).toLocaleDateString([], {
+    month: 'long',
+    year: 'numeric'
+  })
+}
 
 async function handleCancel(id) {
   if (!confirm('Cancel this appointment?')) return
@@ -240,5 +282,18 @@ const currentList = computed(() => {
   if (activeTab.value === 'upcoming') return upcoming.value
   if (activeTab.value === 'past') return past.value
   return cancelled.value
+})
+
+// Computed
+
+const totalSpent = computed(() => {
+  return past.value.reduce((sum, booking) => {
+    return (
+      sum +
+      booking.segments.reduce((s, seg) => {
+        return s + (servicesMap.value[seg.serviceId]?.price || 0)
+      }, 0)
+    )
+  }, 0)
 })
 </script>

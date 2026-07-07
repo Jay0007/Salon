@@ -1,35 +1,52 @@
 <template>
   <div class="space-y-5">
-    <!-- DATE PICKER -->
-    <div>
-      <label class="block text-sm font-medium text-gray-700 mb-1"> Select Date </label>
+    <div class="mb-8">
+      <h2 class="text-2xl font-bold text-gray-900">Choose Your Appointment Time</h2>
 
-      <input
-        type="date"
-        :min="today"
-        :value="selectedDate || ''"
-        @change="onDateChange"
-        class="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-      />
+      <p class="mt-2 text-sm text-gray-500">
+        Select a date and we'll show the earliest appointments available for your selected services.
+      </p>
+    </div>
+    <!-- DATE PICKER -->
+    <div class="rounded-2xl border border-gray-200 bg-white p-5">
+      <label class="mb-3 block text-sm font-semibold text-gray-700"> Appointment Date </label>
+      <div class="flex items-center gap-4">
+        <input
+          type="date"
+          :min="today"
+          :value="selectedDate || ''"
+          @change="onDateChange"
+          class="w-full rounded-xl border border-gray-300 px-4 py-3 text-base transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+        />
+        <button>Today</button>
+      </div>
     </div>
 
     <!-- LOADING -->
-    <p v-if="loading" class="text-sm text-gray-500">Finding earliest available times…</p>
+    <div v-if="loading" class="rounded-2xl border border-dashed border-gray-300 py-12 text-center">
+      <div
+        class="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-indigo-200 border-t-indigo-600"
+      ></div>
+
+      <p class="font-medium text-gray-700">Finding the best available appointments...</p>
+
+      <p class="mt-1 text-sm text-gray-500">This usually takes few seconds.</p>
+    </div>
 
     <!-- TIMELINES -->
     <div v-if="!loading && timelines.length">
       <label class="block text-sm font-medium text-gray-700 mb-3"> Select Time </label>
 
-      <div class="grid grid-cols-3 sm:grid-cols-4 gap-2">
+      <div class="grid grid-cols-3 md:grid-cols-4 xl:grid-cols-4 gap-2">
         <button
           v-for="timeline in visibleTimelines"
           :key="timeline.startAt + timeline.endAt"
           @click="selectTimeline(timeline)"
-          class="rounded-md border px-3 py-1.5 text-sm transition text-center"
+          class="group rounded-2xl border p-2 transition-all duration-200"
           :class="
             selectedStart === toDate(timeline.startAt)?.getTime()
-              ? 'bg-indigo-600 text-white border-indigo-600 ring-2 ring-indigo-300'
-              : 'bg-white hover:border-indigo-400'
+              ? 'bg-indigo-50 border-indigo-600 ring-2 ring-indigo-100 shadow-md scale-[1.01]'
+              : 'bg-white border-gray-200 hover:border-indigo-300 hover:shadow-md hover:-translate-y-0.5'
           "
         >
           {{ formatTime(timeline.startAt) }}
@@ -38,9 +55,16 @@
     </div>
 
     <!-- NO AVAILABILITY -->
-    <p v-if="!loading && selectedDate && !timelines.length" class="text-sm text-gray-500">
-      No available times for this date.
-    </p>
+    <div
+      v-if="!loading && selectedDate && !timelines.length"
+      class="rounded-2xl border border-dashed border-gray-300 py-14 text-center"
+    >
+      <div class="mb-4 text-5xl">📅</div>
+
+      <h3 class="font-semibold text-gray-900">No appointments available</h3>
+
+      <p class="mt-2 text-sm text-gray-500">Try another date or choose different staff.</p>
+    </div>
   </div>
 </template>
 
@@ -82,9 +106,11 @@ function formatTime(value) {
   const d = toDate(value)
   if (!d) return '--:--'
 
-  return d.toLocaleTimeString([], {
+  return d.toLocaleTimeString('en-CA', {
+    timeZone: 'UTC',
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    hour12: true
   })
 }
 function toDate(value) {
@@ -157,7 +183,7 @@ async function loadTimelines() {
       serviceIds: props.serviceIds,
       preferredStaffMap: props.preferredStaffMap
     })
-
+    console.log('findAvailableTimelines result', res.data)
     const raw = Array.isArray(res.data) ? res.data : []
     timelines.value = raw
   } catch (err) {

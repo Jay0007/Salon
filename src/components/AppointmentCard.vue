@@ -41,7 +41,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 
 const props = defineProps({
   booking: { type: Object, required: true },
@@ -51,6 +51,14 @@ const props = defineProps({
   cancelled: Boolean
 })
 const DEBUG = false
+
+// Hooks
+
+onMounted(() => {
+  console.log('BOOKING', props.booking)
+  console.log('Staffmap', props.staffMap)
+  console.log('Servicemap', props.servicesMap)
+})
 
 /* --------------------------------------------------
    HELPERS
@@ -101,12 +109,16 @@ const timeRange = computed(() => {
     console.log('end', end.value)
   }
   if (!start.value || !end.value) return ''
-  return `${start.value.toLocaleTimeString('en-IN', {
+  return `${start.value.toLocaleTimeString('en-CA', {
+    timeZone: 'UTC',
     hour: '2-digit',
-    minute: '2-digit'
-  })} – ${end.value.toLocaleTimeString('en-IN', {
+    minute: '2-digit',
+    hour12: true
+  })} – ${end.value.toLocaleTimeString('en-CA', {
+    timeZone: 'UTC',
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    hour12: true
   })}`
 })
 

@@ -1,22 +1,22 @@
 <!-- src/pages/HomePage.vue -->
 <template>
-  <div class="pt-16 bg-gray-50">
+  <div class="pt-0 bg-gray-50">
     <!-- Hero Section -->
     <section class="relative bg-gradient-to-br from-indigo-600 to-purple-500 text-white">
       <div class="absolute inset-0 opacity-20 bg-[url('/hero-bg.jpg')] bg-cover bg-center"></div>
       <div class="relative z-10 max-w-6xl mx-auto px-6 py-32 text-center">
-        <h1 class="text-5xl font-extrabold mb-4">Welcome to MySalon</h1>
+        <h1 class="text-5xl font-extrabold mb-4">Welcome to Glam of Sindoor</h1>
         <p class="text-lg mb-8">
           Where beauty meets passion. Discover our signature services today.
         </p>
-        <BaseButton @click="$router.push('/services')" size="xl">View Services</BaseButton>
+        <BaseButton @click="$router.push('/Dashboard')" size="xl">Book Services</BaseButton>
       </div>
     </section>
 
     <!-- Why Choose Us -->
     <section class="py-16 bg-white">
       <div class="max-w-4xl mx-auto px-6 text-center">
-        <h2 class="text-3xl font-bold text-gray-800 mb-8">Why Choose MySalon?</h2>
+        <h2 class="text-3xl font-bold text-gray-800 mb-8">Why to Choose Glam of Sindoor?</h2>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
           <div class="space-y-4">
             <div class="text-indigo-600 text-4xl">💎</div>

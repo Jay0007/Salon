@@ -89,40 +89,88 @@
         </div>
 
         <!-- RIGHT : SUMMARY -->
+        <!-- RIGHT : SUMMARY -->
         <div>
-          <div class="sticky top-24 bg-white p-5 rounded-xl border shadow-sm">
-            <h3 class="text-lg font-semibold mb-4">Summary</h3>
+          <div
+            class="sticky top-24 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-lg"
+          >
+            <div class="p-6">
+              <!-- Header -->
+              <div class="mb-6">
+                <h3 class="text-xl font-bold text-gray-900">Booking Summary</h3>
 
-            <ul v-if="selectedServices.length" class="space-y-2">
-              <li
-                v-for="s in selectedServices"
-                :key="s.id"
-                class="flex justify-between text-sm text-gray-700"
+                <p class="mt-1 text-sm text-gray-500">
+                  {{ selectedServices.length }}
+                  {{ selectedServices.length === 1 ? 'service selected' : 'services selected' }}
+                </p>
+              </div>
+
+              <!-- Services -->
+              <div v-if="selectedServices.length" class="space-y-3">
+                <div
+                  v-for="s in selectedServices"
+                  :key="s.id"
+                  class="flex items-start justify-between rounded-2xl border border-gray-100 bg-gray-50 p-4"
+                >
+                  <div>
+                    <h4 class="font-medium text-gray-900">
+                      {{ s.name }}
+                    </h4>
+
+                    <p class="mt-1 text-sm text-gray-500">⏱ {{ s.duration }} mins</p>
+                  </div>
+
+                  <div class="text-right">
+                    <p class="font-semibold text-gray-900">₹{{ s.price }}</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Empty -->
+              <div
+                v-else
+                class="rounded-2xl border border-dashed border-gray-300 py-10 text-center"
               >
-                <span>{{ s.name }}</span>
-                <span>₹{{ s.price }}</span>
-              </li>
-            </ul>
+                <div
+                  class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-gray-100 text-xl"
+                >
+                  ✨
+                </div>
 
-            <p v-else class="text-sm text-gray-400">No services selected</p>
+                <p class="font-medium text-gray-700">No services selected</p>
 
-            <div class="mt-4 pt-4 border-t text-sm space-y-1">
-              <div class="flex justify-between font-medium">
-                <span>Total</span>
-                <span>₹{{ totalPrice }}</span>
+                <p class="mt-1 text-sm text-gray-500">Select one or more services to begin.</p>
               </div>
-              <div class="flex justify-between text-gray-500">
-                <span>Duration</span>
-                <span>{{ totalDuration }} min</span>
-              </div>
-            </div>
 
-            <!-- Selected Time -->
-            <div v-if="booking" class="mt-4 pt-4 border-t text-sm">
-              <p class="text-gray-500 mb-1">Selected time</p>
-              <p class="font-medium">
-                {{ formatDateTime(booking.startAt) }}
-              </p>
+              <!-- Totals -->
+              <div class="mt-6 border-t border-gray-200 pt-5 space-y-4">
+                <div class="flex items-center justify-between">
+                  <span class="text-gray-600"> Total Price </span>
+
+                  <span class="text-2xl font-bold text-indigo-600"> ₹{{ totalPrice }} </span>
+                </div>
+
+                <div class="flex items-center justify-between">
+                  <span class="text-gray-600"> Total Duration </span>
+
+                  <span class="font-semibold text-gray-900"> {{ totalDuration }} mins </span>
+                </div>
+              </div>
+
+              <!-- Appointment -->
+              <div v-if="booking" class="mt-6 rounded-2xl bg-indigo-50 p-4">
+                <p class="text-xs font-semibold uppercase tracking-wider text-indigo-600">
+                  Appointment Time
+                </p>
+
+                <p class="mt-2 text-lg font-semibold text-gray-900">
+                  {{ formatDateTime(booking.startAt) }}
+                </p>
+
+                <p class="mt-1 text-sm text-gray-500">
+                  Ends around {{ formatDateTime(booking.endAt) }}
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -189,7 +237,14 @@ const totalDuration = computed(() =>
 const totalPrice = computed(() =>
   selectedServices.value.reduce((sum, s) => sum + (s.price || 0), 0)
 )
+function formatTime(value) {
+  const d = new Date(value)
 
+  return d.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit'
+  })
+}
 /* --------------------------------------------------
    Step Validation
 -------------------------------------------------- */
@@ -273,7 +328,8 @@ function formatDateTime(value) {
 
   if (!d || isNaN(d)) return 'Invalid Date'
 
-  return d.toLocaleString([], {
+  return d.toLocaleString('en-CA', {
+    timeZone: 'UTC',
     weekday: 'short',
     day: 'numeric',
     month: 'short',

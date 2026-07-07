@@ -1,7 +1,7 @@
 // functions/index.js
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { admin, db } = require('./firebaseAdmin')
-
+const DEBUG = false
 const {
   findAvailableTimelines,
   validateTimeline,
@@ -35,7 +35,9 @@ function assertAdmin(request) {
 
 exports.findAvailableTimelines = onCall({ invoker: 'public' }, async (request) => {
   assertAuth(request)
-
+  if (DEBUG) {
+    console.log('index.js - Request data:', request.data)
+  }
   const { date, serviceIds, preferredStaffMap = {} } = request.data || {}
 
   if (!date || !Array.isArray(serviceIds) || serviceIds.length === 0) {
@@ -58,7 +60,9 @@ exports.createBooking = onCall({ invoker: 'public' }, async (request) => {
   assertAuth(request)
 
   const { timeline, bookingFor } = request.data || {}
-
+  if (DEBUG) {
+    console.log('index.js - Create booking request:', request.data)
+  }
   if (
     !timeline ||
     !timeline.startAt ||
@@ -144,6 +148,10 @@ exports.rescheduleBooking = onCall({ invoker: 'public' }, async (request) => {
 
   const { bookingId, newTimeline } = request.data || {}
 
+  if (DEBUG) {
+    console.log('index.js - Reschedule booking request:', request.data)
+  }
+
   if (
     !bookingId ||
     !newTimeline ||
@@ -155,7 +163,9 @@ exports.rescheduleBooking = onCall({ invoker: 'public' }, async (request) => {
 
   const ref = db.collection('bookings').doc(bookingId)
   const snap = await ref.get()
-
+  if (DEBUG) {
+    console.log('index.js - Booking snapshot:', snap.exists, snap.data())
+  }
   if (!snap.exists) {
     throw new HttpsError('not-found', 'Booking not found')
   }
@@ -165,7 +175,7 @@ exports.rescheduleBooking = onCall({ invoker: 'public' }, async (request) => {
   if (booking.userId !== request.auth.uid) {
     throw new HttpsError('permission-denied', 'Not your booking')
   }
-  await unblockStaffCalendarPerSegment(booking.segments || [])
+  // await unblockStaffCalendarPerSegment(booking.segments || [])
 
   // 🔐 Validate new timeline
   const validation = await validateTimeline(newTimeline, request.auth.uid)
@@ -178,7 +188,9 @@ exports.rescheduleBooking = onCall({ invoker: 'public' }, async (request) => {
 
   // 🚫 Block new segments
   await blockStaffCalendarPerSegment(newTimeline.segments)
-
+  if (DEBUG) {
+    console.log('index.js - New timeline:', newTimeline)
+  }
   await ref.update({
     segments: newTimeline.segments,
     startAt: admin.firestore.Timestamp.fromDate(new Date(newTimeline.startAt)),
@@ -200,7 +212,9 @@ exports.getStaffUtilization = onCall({ invoker: 'public' }, async (request) => {
   if (!staffId || !date) {
     throw new HttpsError('invalid-argument', 'staffId and date required')
   }
-
+  if (DEBUG) {
+    console.log('index.js - getStaffUtilization request:', request.data)
+  }
   const salon = await getSalonSettings()
 
   const openAt = new Date(date)
@@ -208,20 +222,24 @@ exports.getStaffUtilization = onCall({ invoker: 'public' }, async (request) => {
 
   const closeAt = new Date(date)
   closeAt.setHours(salon.closeHour, 0, 0, 0)
-
+  if (DEBUG) {
+    console.log('index.js - openAt:', openAt, 'closeAt:', closeAt)
+  }
   const key = `${staffId}_${date.slice(0, 10)}`
   const snap = await db.collection('staffCalendars').doc(key).get()
 
   const blocked = snap.exists
     ? snap.data().blocked.map((b) => ({
-        startAt: new Date(b.startAt),
-        endAt: new Date(b.endAt)
+        startAt: normalizeToDate(b.startAt),
+        endAt: normalizeToDate(b.endAt)
       }))
     : []
 
   const freeIntervals = []
   let cursor = openAt
-
+  if (DEBUG) {
+    console.log('index.js - blocked intervals:', blocked)
+  }
   for (const b of blocked.sort((a, b) => a.startAt - b.startAt)) {
     if (cursor < b.startAt) freeIntervals.push({ startAt: cursor, endAt: b.startAt })
     cursor = new Date(Math.max(cursor, b.endAt))
@@ -239,7 +257,12 @@ exports.getStaffForBooking = onCall({ invoker: 'public' }, async (request) => {
   }
 
   const snap = await db.collection('staff').where('isActive', '==', true).get()
-
+  if (DEBUG) {
+    console.log(
+      'index.js - getStaffForBooking snapshot:',
+      snap.docs.map((d) => d.data())
+    )
+  }
   return snap.docs.map((d) => ({
     id: d.id,
     name: d.data().name,
@@ -251,7 +274,9 @@ exports.getBookingLookups = onCall({ invoker: 'public' }, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Auth required')
   }
-
+  if (DEBUG) {
+    console.log('index.js - getBookingLookups request:', request.data)
+  }
   const [servicesSnap, staffSnap] = await Promise.all([
     db.collection('services').get(),
     db.collection('staff').get()
@@ -265,7 +290,9 @@ exports.getBookingLookups = onCall({ invoker: 'public' }, async (request) => {
       price: d.data().price
     }
   })
-
+  if (DEBUG) {
+    console.log('index.js - services:', services)
+  }
   const staff = {}
   staffSnap.forEach((d) => {
     staff[d.id] = {
@@ -282,6 +309,12 @@ exports.getMyBookings = onCall({ invoker: 'public' }, async (request) => {
   }
 
   const snap = await db.collection('bookings').where('userId', '==', request.auth.uid).get()
+  if (DEBUG) {
+    console.log(
+      'index.js - getMyBookings snapshot:',
+      snap.docs.map((d) => d.data())
+    )
+  }
   return snap.docs.map((d) => {
     const data = d.data()
     const start = normalizeToDate(data.startAt)
@@ -307,7 +340,9 @@ exports.createService = onCall({ invoker: 'public' }, async (request) => {
   if (!name || !category || !price || !duration) {
     throw new HttpsError('invalid-argument', 'Invalid service data')
   }
-
+  if (DEBUG) {
+    console.log('index.js - createService request:', request.data)
+  }
   const ref = await db.collection('services').add({
     name,
     category,
@@ -433,17 +468,23 @@ exports.getStaffCalendarAdmin = onCall({ invoker: 'public' }, async (request) =>
   if (!request.auth || request.auth.token.admin !== true) {
     throw new HttpsError('permission-denied', 'Admin only')
   }
-
+  if (DEBUG) {
+    console.log('index.js - getStaffCalendarAdmin request:', request.data)
+  }
   const { staffId, date } = request.data || {}
   if (!staffId || !date) {
     throw new HttpsError('invalid-argument', 'staffId and date required')
   }
-
+  if (DEBUG) {
+    console.log('index.js - getStaffCalendarAdmin request:', request.data)
+  }
   const docId = `${staffId}_${date}`
   const snap = await db.collection('staffCalendars').doc(docId).get()
 
   const blocked = snap.exists ? snap.data().blocked || [] : []
-
+  if (DEBUG) {
+    console.log('index.js - getStaffCalendarAdmin blocked intervals:', blocked)
+  }
   return blocked.map((b) => ({
     startAt: normalizeToDate(b.startAt)?.toISOString(),
     endAt: normalizeToDate(b.endAt)?.toISOString()

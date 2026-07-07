@@ -1,38 +1,120 @@
 <template>
-  <div class="bg-white p-6 rounded-lg shadow border mb-6">
-    <h2 class="text-xl font-semibold mb-4">Who is the booking for?</h2>
-    <div class="flex gap-4">
+  <div class="space-y-8">
+    <!-- Heading -->
+    <div>
+      <h2 class="text-2xl font-bold text-gray-900">Who is this appointment for?</h2>
+
+      <p class="mt-1 text-sm text-gray-500">Choose who will receive this appointment.</p>
+    </div>
+
+    <!-- Cards -->
+    <div class="grid gap-4 md:grid-cols-2">
+      <!-- Myself -->
       <button
         @click="select('self')"
-        :class="buttonClass('self')"
-        class="px-4 py-2 rounded-lg border"
+        class="rounded-2xl border p-5 text-left transition-all duration-200"
+        :class="
+          bookingFor.type === 'self'
+            ? 'border-indigo-600 bg-indigo-50 shadow'
+            : 'border-gray-200 hover:border-indigo-300 hover:shadow'
+        "
       >
-        Myself
+        <div class="flex items-start justify-between">
+          <div>
+            <div
+              class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-indigo-100 text-xl"
+            >
+              👤
+            </div>
+
+            <h3 class="text-lg font-semibold text-gray-900">Myself</h3>
+
+            <p class="mt-1 text-sm text-gray-500">Book using my account information.</p>
+          </div>
+
+          <div
+            v-if="bookingFor.type === 'self'"
+            class="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-600 text-white"
+          >
+            ✓
+          </div>
+        </div>
       </button>
+
+      <!-- Someone Else -->
       <button
         @click="select('other')"
-        :class="buttonClass('other')"
-        class="px-4 py-2 rounded-lg border"
+        class="rounded-2xl border p-5 text-left transition-all duration-200"
+        :class="
+          bookingFor.type === 'other'
+            ? 'border-indigo-600 bg-indigo-50 shadow'
+            : 'border-gray-200 hover:border-indigo-300 hover:shadow'
+        "
       >
-        Someone else
+        <div class="flex items-start justify-between">
+          <div>
+            <div
+              class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-indigo-100 text-xl"
+            >
+              👥
+            </div>
+
+            <h3 class="text-lg font-semibold text-gray-900">Someone Else</h3>
+
+            <p class="mt-1 text-sm text-gray-500">Book for a family member or friend.</p>
+          </div>
+
+          <div
+            v-if="bookingFor.type === 'other'"
+            class="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-600 text-white"
+          >
+            ✓
+          </div>
+        </div>
       </button>
     </div>
 
-    <div v-if="bookingFor.type === 'other'" class="mt-4 space-y-2">
-      <input
-        v-model="bookingFor.name"
-        type="text"
-        placeholder="Guest Name"
-        class="w-full p-2 border rounded"
-      />
-      <input
-        v-model="bookingFor.phone"
-        type="tel"
-        placeholder="+91XXXXXXXXXX"
-        class="w-full p-2 border rounded"
-        @input="enforcePrefix"
-      />
-    </div>
+    <!-- Guest Form -->
+    <Transition
+      enter-active-class="transition duration-200 ease-out"
+      enter-from-class="opacity-0 translate-y-2"
+      enter-to-class="opacity-100 translate-y-0"
+      leave-active-class="transition duration-150 ease-in"
+      leave-from-class="opacity-100 translate-y-0"
+      leave-to-class="opacity-0 translate-y-2"
+    >
+      <div
+        v-if="bookingFor.type === 'other'"
+        class="rounded-2xl border border-gray-200 bg-gray-50 p-6"
+      >
+        <h3 class="mb-5 text-lg font-semibold text-gray-900">Guest Information</h3>
+
+        <div class="space-y-5">
+          <div>
+            <label class="mb-2 block text-sm font-medium text-gray-700"> Full Name </label>
+
+            <input
+              v-model="bookingFor.name"
+              type="text"
+              placeholder="Enter guest name"
+              class="w-full rounded-xl border border-gray-300 px-4 py-3 transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+            />
+          </div>
+
+          <div>
+            <label class="mb-2 block text-sm font-medium text-gray-700"> Phone Number </label>
+
+            <input
+              v-model="bookingFor.phone"
+              type="tel"
+              placeholder="+91 XXXXX XXXXX"
+              @input="enforcePrefix"
+              class="w-full rounded-xl border border-gray-300 px-4 py-3 transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+            />
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -43,11 +125,13 @@ import { auth } from '@/services/firebase'
 const props = defineProps(['modelValue'])
 const emit = defineEmits(['update:modelValue'])
 
-const bookingFor = ref({
-  type: 'self',
-  name: '',
-  phone: ''
-})
+const bookingFor = ref(
+  props.modelValue || {
+    type: 'self',
+    name: '',
+    phone: ''
+  }
+)
 
 // 🟩 Set current user name on mount if booking for self
 onMounted(() => {
