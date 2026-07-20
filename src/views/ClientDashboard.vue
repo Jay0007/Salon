@@ -1,15 +1,28 @@
 <template>
-  <div class="min-h-screen bg-gray-50">
-    <div class="max-w-5xl mx-auto py-12 px-4">
+  <div class="min-h-screen bg-gray-100">
+    <div class="max-w-7xl mx-auto py-12 px-4">
       <!-- Header -->
-      <div class="mb-8">
-        <h1 class="text-3xl font-semibold text-gray-900">Book an Appointment</h1>
-        <p class="text-gray-500 mt-1">Choose services, staff, and your preferred time</p>
+      <div class="mb-10 flex items-center justify-between">
+        <div>
+          <h1 class="text-4xl font-bold tracking-tight text-gray-900">Book Appointment</h1>
+
+          <p class="mt-2 text-gray-500">Complete the steps below to reserve your appointment.</p>
+        </div>
+
+        <div class="hidden rounded-full bg-indigo-50 px-4 py-2 md:flex">
+          <span class="font-semibold text-indigo-700"> Step {{ step }} </span>
+
+          <span class="mx-2 text-gray-400"> / </span>
+
+          <span class="text-gray-600">
+            {{ steps.length }}
+          </span>
+        </div>
       </div>
 
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div class="grid grid-cols-3 lg:grid-cols-3 gap-8">
         <!-- LEFT : STEPS -->
-        <div class="lg:col-span-2 space-y-6">
+        <div class="lg:col-span-2 space-y-6" :class="step === 5 ? 'sm:col-span-8' : ''">
           <!-- Progress -->
           <div class="flex items-center justify-between">
             <div v-for="(label, index) in steps" :key="index" class="flex items-center flex-1">
@@ -23,7 +36,11 @@
                       : 'bg-gray-200 text-gray-600'
                 "
               >
-                {{ index + 1 }}
+                <span v-if="step > index + 1"> ✓ </span>
+
+                <span v-else>
+                  {{ index + 1 }}
+                </span>
               </div>
               <span class="ml-2 text-sm text-gray-700">{{ label }}</span>
               <div v-if="index < steps.length - 1" class="flex-1 h-0.5 bg-gray-300 mx-3" />
@@ -31,7 +48,7 @@
           </div>
 
           <!-- Step Card -->
-          <div class="bg-white p-6 rounded-xl border shadow-sm">
+          <div class="rounded-3xl border border-gray-200 bg-white p-8 shadow-sm">
             <!-- STEP 1 -->
             <StepBookingFor v-if="step === 1" v-model="bookingFor" />
 
@@ -42,7 +59,8 @@
             <SelectStaff
               v-if="step === 3"
               :services="selectedServices"
-              v-model="staffAssignments"
+              v-model:preferred-staff="staffAssignments"
+              v-model:staff-names="staffNames"
             />
 
             <!-- STEP 4 -->
@@ -53,10 +71,22 @@
               v-model="booking"
             />
 
+            <!-- STEP 5 -->
+            <ReviewBooking
+              v-if="step === 5"
+              :booking="booking"
+              :selected-services="selectedServices"
+              :booking-for="bookingFor"
+              :staff-names="staffNames"
+              @back="step--"
+              @confirm-booking="confirmBooking"
+              
+            />
+
             <!-- Controls -->
             <div class="mt-8 flex items-center justify-between">
               <button
-                v-if="step > 1"
+                v-if="step > 1 && step < steps.length"
                 @click="step--"
                 class="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50"
               >
@@ -66,31 +96,33 @@
               <div class="flex-1"></div>
 
               <button
-                v-if="step < 4"
+                v-if="step < steps.length"
                 @click="step++"
                 :disabled="!canProceed"
-                class="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50"
+                class="h-11 rounded-xl bg-indigo-600 px-6 font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
               >
-                Next
+                {{ step === 4 ? 'Review Booking →' : 'Continue →' }}
               </button>
 
-              <button
-                v-if="step === 4"
+              <!-- <button
+                v-if="step === steps.length"
                 @click="confirmBooking"
                 :disabled="
-                  !booking || !Array.isArray(booking.segments) || booking.segments.length === 0
+                  bookingLoading ||
+                  !booking ||
+                  !Array.isArray(booking.segments) ||
+                  booking.segments.length === 0
                 "
                 class="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50"
               >
-                Confirm Booking
-              </button>
+                {{ bookingLoading ? 'Confirming...' : 'Confirm Appointment' }}
+              </button> -->
             </div>
           </div>
         </div>
-
+        
         <!-- RIGHT : SUMMARY -->
-        <!-- RIGHT : SUMMARY -->
-        <div>
+        <div v-if="step < 5" ">
           <div
             class="sticky top-24 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-lg"
           >
@@ -116,6 +148,7 @@
                     <h4 class="font-medium text-gray-900">
                       {{ s.name }}
                     </h4>
+                    {{ selectedStaffNames[s.id] }}
 
                     <p class="mt-1 text-sm text-gray-500">⏱ {{ s.duration }} mins</p>
                   </div>
@@ -190,6 +223,7 @@ import StepBookingFor from '@/components/StepBookingFor.vue'
 import StepServices from '@/components/StepServices.vue'
 import StepSchedule from '@/components/StepSchedule.vue'
 import SelectStaff from '@/components/SelectStaff.vue'
+import ReviewBooking from '@/components/ReviewBooking.vue'
 
 import { auth, onAuthStateChanged, createBooking } from '@/services/firebase'
 
@@ -202,7 +236,7 @@ const user = ref(null)
 /* --------------------------------------------------
    Step Control
 -------------------------------------------------- */
-const steps = ['Who is this for?', 'Select Services', 'Select Staff', 'Date & Time']
+const steps = ['Who is this for?', 'Select Services', 'Select Staff', 'Date & Time', 'Review']
 const step = ref(1)
 
 /* --------------------------------------------------
@@ -221,11 +255,14 @@ const selectedServices = ref([])
  * { serviceId: staffId | 'ANY' }
  */
 const staffAssignments = ref({})
+const staffNames = ref({})
 
 /**
  * booking (TIMELINE)
  */
 const booking = ref(null)
+
+const bookingLoading = ref(false)
 
 /* --------------------------------------------------
    Derived Values
@@ -237,6 +274,14 @@ const totalDuration = computed(() =>
 const totalPrice = computed(() =>
   selectedServices.value.reduce((sum, s) => sum + (s.price || 0), 0)
 )
+const selectedStaffNames = computed(() => {
+  return Object.fromEntries(
+    Object.entries(staffAssignments.value).map(([serviceId, staffId]) => [
+      serviceId,
+      staffId === 'ANY' ? 'Any Available Staff' : (staffNames.value[staffId] ?? 'Staff')
+    ])
+  )
+})
 function formatTime(value) {
   const d = new Date(value)
 
@@ -245,6 +290,7 @@ function formatTime(value) {
     minute: '2-digit'
   })
 }
+
 /* --------------------------------------------------
    Step Validation
 -------------------------------------------------- */
@@ -254,6 +300,7 @@ const canProceed = computed(() => {
   if (step.value === 3) {
     return selectedServices.value.every((s) => staffAssignments.value[s.id])
   }
+  if (step.value === 4) return !!booking.value && Array.isArray(booking.value.segments)
   return true
 })
 
@@ -346,6 +393,7 @@ async function confirmBooking() {
     alert('Please select a time')
     return
   }
+  bookingLoading.value = true
 
   try {
     await createBooking({
@@ -358,6 +406,8 @@ async function confirmBooking() {
     alert(err?.message || 'Booking failed')
     booking.value = null
     step.value = 4
+  } finally {
+    bookingLoading.value = false
   }
 }
 </script>

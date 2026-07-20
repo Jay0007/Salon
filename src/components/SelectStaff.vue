@@ -51,7 +51,7 @@
             @click="onSelect(service.id, ANY)"
             class="group w-full rounded-xl border p-4 text-left transition-all duration-200"
             :class="
-              (modelValue[service.id] ?? ANY) === ANY
+              (preferredStaff[service.id] ?? ANY) === ANY
                 ? 'border-indigo-600 bg-indigo-50 shadow-md scale-[1.01] ring-2 ring-indigo-100'
                 : 'border-gray-200 hover:border-indigo-300 hover:shadow-sm'
             "
@@ -72,7 +72,7 @@
               </div>
 
               <div
-                v-if="(modelValue[service.id] ?? ANY) === ANY"
+                v-if="(preferredStaff[service.id] ?? ANY) === ANY"
                 class="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-600 text-white"
               >
                 ✓
@@ -96,7 +96,7 @@
             @click="staffOptions.length > 1 && onSelect(service.id, staff.id)"
             class="group w-full rounded-xl border p-4 text-left transition-all duration-200"
             :class="[
-              modelValue[service.id] === staff.id || staffOptions.length === 1
+              preferredStaff[service.id] === staff.id || staffOptions.length === 1
                 ? 'border-indigo-600 bg-indigo-50 shadow-md scale-[1.01] ring-2 ring-indigo-100'
                 : 'border-gray-200 hover:border-indigo-300 hover:shadow-lg hover:-translate-y-0.5',
               staffOptions.length === 1 ? 'cursor-default' : ''
@@ -128,7 +128,7 @@
               </div>
 
               <div
-                v-if="modelValue[service.id] === staff.id || staffOptions.length === 1"
+                v-if="preferredStaff[service.id] === staff.id || staffOptions.length === 1"
                 class="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-600 text-white"
               >
                 ✓
@@ -142,7 +142,7 @@
 </template>
 
 <script setup>
-import { ref, onBeforeMount, watchEffect } from 'vue'
+import { ref, onBeforeMount, watchEffect, computed } from 'vue'
 import { httpsCallable } from 'firebase/functions'
 import { functions } from '@/services/firebase'
 
@@ -153,7 +153,11 @@ const props = defineProps({
     type: Array,
     required: true
   },
-  modelValue: {
+  staffNames: {
+    type: Object,
+    required: true
+  },
+  preferredStaff: {
     type: Object,
     required: true
   }
@@ -168,10 +172,12 @@ const avatarColors = [
 ]
 const loading = ref(true)
 
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:preferredStaff', 'update:staffNames'])
 
 const staffList = ref([])
-
+const staffLookup = computed(() => {
+  return Object.fromEntries(staffList.value.map((staff) => [staff.id, staff.name]))
+})
 /* Load staff once */
 onBeforeMount(async () => {
   const fn = httpsCallable(functions, 'getStaffForBooking')
@@ -189,11 +195,10 @@ function staffByService(serviceId) {
 
 /* Auto-assign if only ONE staff exists */
 watchEffect(() => {
-  const next = { ...props.modelValue }
+  const next = { ...props.preferredStaff }
 
   props.services.forEach((service) => {
     const staffOptions = staffByService(service.id)
-
     // If exactly ONE staff → auto-assign
     if (staffOptions.length === 1) {
       next[service.id] = staffOptions[0].id
@@ -205,18 +210,19 @@ watchEffect(() => {
       next[service.id] = ANY
     }
   })
-
   // Emit only if changed
-  if (JSON.stringify(next) !== JSON.stringify(props.modelValue)) {
-    emit('update:modelValue', next)
+  if (JSON.stringify(next) !== JSON.stringify(props.preferredStaff)) {
+    emit('update:preferredStaff', next)
+    emit('update:staffNames', staffLookup.value)
   }
 })
 
 function onSelect(serviceId, staffId) {
-  emit('update:modelValue', {
-    ...props.modelValue,
+  emit('update:preferredStaff', {
+    ...props.preferredStaff,
     [serviceId]: staffId === ANY ? ANY : staffId
   })
+  emit('update:staffNames', staffLookup.value)
 }
 
 function getInitials(name) {
