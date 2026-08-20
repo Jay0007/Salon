@@ -491,6 +491,67 @@ exports.getStaffCalendarAdmin = onCall({ invoker: 'public' }, async (request) =>
   }))
 })
 
+// User form submission
+
+exports.submitContactForm = onCall(async (request) => {
+
+    const {
+        fullName,
+        email,
+        phone,
+        service,
+        message
+    } = request.data;
+
+    if (!fullName?.trim())
+        throw new HttpsError("invalid-argument", "Name is required.");
+
+    if (!email?.trim())
+        throw new HttpsError("invalid-argument", "Email is required.");
+
+    if (!message?.trim())
+        throw new HttpsError("invalid-argument", "Message is required.");
+
+    if (message.length > 2000)
+        throw new HttpsError("invalid-argument", "Message is too long.");
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    const doc = {
+
+        fullName: fullName.trim(),
+
+        email: email.trim().toLowerCase(),
+
+        phone: phone?.trim() || "",
+
+        service: service || "",
+
+        message: message.trim(),
+
+        status: "new",
+
+        createdAt: now,
+
+        updatedAt: now
+
+    };
+
+    const ref = await admin
+        .firestore()
+        .collection("contactMessages")
+        .add(doc);
+
+    return {
+
+        success: true,
+
+        id: ref.id
+
+    };
+
+});
+
 //Admin - Salon settings
 
 exports.makeAdmin = onCall({ invoker: 'public' }, async (request) => {

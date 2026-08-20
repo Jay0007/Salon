@@ -156,13 +156,10 @@
 </template>
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useServicesStore } from '@/stores/services'
 import {
-  db,
   auth,
-  collection,
-  getDocs,
-  query,
-  orderBy,
   createService,
   updateService,
   toggleServiceStatus
@@ -170,10 +167,18 @@ import {
 
 /* ---------------- State ---------------- */
 
-const services = ref([])
-const loading = ref(true)
+
 const saving = ref(false)
 const error = ref('')
+
+/* ---------------- Pinia ---------------- */
+
+const servicesStore = useServicesStore()
+
+const {
+    services,
+    loading
+} = storeToRefs(servicesStore)
 
 const categories = ['Hair', 'Makeup', 'Facial', 'Bridal', 'Nails']
 
@@ -200,19 +205,19 @@ const groupedServices = computed(() => {
 
 /* ---------------- Methods ---------------- */
 
-async function loadServices() {
-  loading.value = true
-  services.value = []
+// async function loadServices() {
+//   loading.value = true
+//   services.value = []
 
-  const q = query(collection(db, 'services'), orderBy('createdAt', 'desc'))
-  const snap = await getDocs(q)
+//   const q = query(collection(db, 'services'), orderBy('createdAt', 'desc'))
+//   const snap = await getDocs(q)
 
-  snap.forEach((d) => {
-    services.value.push({ id: d.id, ...d.data() })
-  })
+//   snap.forEach((d) => {
+//     services.value.push({ id: d.id, ...d.data() })
+//   })
 
-  loading.value = false
-}
+//   loading.value = false
+// }
 
 async function saveService() {
   if (saving.value) return
@@ -236,7 +241,7 @@ async function saveService() {
     }
 
     resetForm()
-    await loadServices()
+    await servicesStore.fetchServices(true)
   } catch (e) {
     error.value = e.message || 'Failed to save service'
   } finally {
@@ -264,7 +269,7 @@ async function toggleStatus(service) {
       serviceId: service.id,
       isActive: !service.isActive
     })
-    await loadServices()
+    await servicesStore.fetchServices(true)
   } catch (e) {
     error.value = e.message || 'Failed to update status'
   }
@@ -290,7 +295,7 @@ onMounted(async () => {
       await auth.currentUser.getIdToken(true)
     }
 
-    await loadServices()
+    await servicesStore.fetchServices()
   } catch (e) {
     error.value = e?.details || e?.message || 'Failed to save service'
   }

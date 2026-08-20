@@ -79,8 +79,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { db, collection, getDocs, query, where, orderBy } from '@/services/firebase'
+import { computed, onMounted } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useServicesStore } from '@/stores/services'
 
 /* ---------------- Props / Emits ---------------- */
 
@@ -92,11 +93,6 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:modelValue'])
-
-/* ---------------- State ---------------- */
-
-const services = ref([])
-const loading = ref(true)
 
 /* ---------------- Computed ---------------- */
 
@@ -126,23 +122,14 @@ function toggle(service) {
   emit('update:modelValue', next)
 }
 
-async function loadServices() {
-  loading.value = true
+const servicesStore = useServicesStore()
 
-  const q = query(
-    collection(db, 'services'),
-    where('isActive', '==', true),
-    orderBy('createdAt', 'desc'),
-    orderBy('__name__', 'desc')
-  )
+const {
+  services,
+  loading
+} = storeToRefs(servicesStore)
 
-  const snap = await getDocs(q)
-  services.value = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-
-  loading.value = false
-}
-
-/* ---------------- Lifecycle ---------------- */
-
-onMounted(loadServices)
+onMounted(async () => {
+  await servicesStore.fetchServices()
+})
 </script>

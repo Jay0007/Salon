@@ -142,7 +142,7 @@
   </nav>
 
   <!-- Optional tagline below nav -->
-  <div class="mt-16 bg-indigo-50 text-center py-2 text-sm text-indigo-700 hidden sm:block">
+  <div class="mt-16 bg-indigo-50 text-center py-2 text-sm text-indigo-700 sm:block">
     Professional beauty services, tailored for you.
   </div>
 </template>

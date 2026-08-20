@@ -4,6 +4,7 @@ import App from './App.vue'
 import router from './router'
 import { auth, onAuthStateChanged } from '@/services/firebase'
 import { bootstrapSession } from '@/helpers/sessionBootstrap'
+import { createPinia } from 'pinia'
 
 const app = createApp(App)
 
@@ -18,4 +19,5 @@ onAuthStateChanged(auth, async (user) => {
   bootstrapSession(user)
 })
 app.use(router)
+app.use(createPinia())
 app.mount('#app')
